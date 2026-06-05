@@ -1,56 +1,64 @@
-# Welcome to your Expo app 👋
+# plAIt 🍽️
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Photograph a restaurant menu, get your three best dishes — personalized to a
+hardcoded profile (halal, shellfish-free, high-protein by default). Single-user
+demo built with Expo + Claude. No accounts, no database, no deployment.
 
-## Get started
+**The loop:** hardcoded profile → camera → Claude Vision reads the menu →
+menu-aware questions → Claude ranks the top 3.
 
-1. Install dependencies
+## Setup
+
+1. Install dependencies:
 
    ```bash
    npm install
    ```
 
-2. Start the app
+2. Add your Anthropic API key. Copy `.env.example` to `.env` and fill it in:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   > **Important (Expo):** the variable **must** be named
+   > `EXPO_PUBLIC_ANTHROPIC_API_KEY`. Expo only inlines env vars prefixed with
+   > `EXPO_PUBLIC_` into the app bundle — a bare `ANTHROPIC_API_KEY` is
+   > `undefined` at runtime in Expo Go. Restart the dev server after editing
+   > `.env`.
+
+3. Start the app and open it in Expo Go on your phone:
 
    ```bash
    npx expo start
    ```
 
-In the output, you'll find options to open the app in a
+## Edit your profile
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+The demo profile lives in `src/config/profile.ts` — edit it directly to demo
+different scenarios (goals, dietary restrictions, allergens).
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## Project layout
 
-## Get a fresh project
+| Path | What |
+| --- | --- |
+| `src/config/profile.ts` | Hardcoded demo profile |
+| `src/lib/analyzeMenu.ts` | Pure-TS menu analysis (elimination-power scoring) |
+| `src/lib/buildQuestionSet.ts` | Pure-TS, menu-aware question funnel |
+| `src/lib/callVision.ts` | Claude Vision — reads the menu photo into JSON |
+| `src/lib/callReason.ts` | Claude reasoning — ranks the top 3 picks |
+| `src/app/` | Screens: `index` (home), `camera`, `questions`, `results` |
 
-When you're ready, run:
+## Testing
+
+Offline (no API key needed) — exercises the question funnel on mock menus:
 
 ```bash
-npm run reset-project
+npx tsx scripts/test-funnel.ts
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+End-to-end against a real menu photo (uses your API key):
 
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+npx tsx scripts/test-pipeline.ts ./test-menu.jpg
+```

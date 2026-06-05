@@ -1,98 +1,86 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { Body, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
+import { MY_PROFILE } from '@/config/profile';
+import { Plait } from '@/constants/plait-theme';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+const PROFILE_CHIPS = ['Halal', 'Shellfish-free', 'High-protein'];
 
 export default function HomeScreen() {
+  const router = useRouter();
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.hero}>
+        <Title style={styles.logo}>
+          pl<Text style={{ color: Plait.color.coral }}>AI</Text>t
+        </Title>
+        <Subtitle style={styles.tagline}>
+          Point your camera at a menu. I&apos;ll find your three best dishes.
+        </Subtitle>
+      </View>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+      <View style={styles.footer}>
+        <View style={styles.chips}>
+          {PROFILE_CHIPS.map((c) => (
+            <View key={c} style={styles.chip}>
+              <Text style={styles.chipText}>{c}</Text>
+            </View>
+          ))}
+        </View>
+        <Body style={styles.notes}>Tuned for: {MY_PROFILE.notes}</Body>
+        <PrimaryButton label="📷  Scan a menu" onPress={() => router.push('/camera')} />
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safe: {
+    flex: 1,
+    backgroundColor: Plait.color.background,
+    paddingHorizontal: Plait.space.lg,
+  },
+  hero: {
     flex: 1,
     justifyContent: 'center',
+    gap: Plait.space.md,
+  },
+  logo: {
+    fontSize: 72,
+  },
+  tagline: {
+    fontSize: 18,
+    lineHeight: 26,
+    maxWidth: 320,
+  },
+  footer: {
+    paddingBottom: Plait.space.lg,
+    gap: Plait.space.md,
+  },
+  chips: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Plait.space.sm,
   },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
+  chip: {
+    backgroundColor: Plait.color.card,
+    borderRadius: Plait.radius.pill,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: Plait.color.border,
   },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+  chipText: {
+    color: Plait.color.teal,
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: Plait.font.sans,
   },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  notes: {
+    color: Plait.color.textDim,
+    fontSize: 14,
   },
 });
