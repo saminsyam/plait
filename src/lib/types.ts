@@ -47,6 +47,28 @@ export type Question = {
 /** Map of questionId -> chosen option value. */
 export type Answers = Record<string, string>;
 
+/**
+ * Menu context produced by the Vision call (Call 1). Distinct from the
+ * pure-TS MenuContext above: these dimensions and questions are written by
+ * the model directly from the menu, ready to render as questions.
+ */
+export type VisionDimension = {
+  id: string;
+  question_text: string;
+  options: { label: string; value: string; emoji: string | null }[];
+};
+
+export type VisionMenuContext = {
+  cuisine_type: string;
+  dimensions: VisionDimension[];
+};
+
+/** What callVision returns: the parsed items plus the model's menu_context. */
+export type VisionResult = {
+  items: MenuItem[];
+  menu_context: VisionMenuContext;
+};
+
 export type Pick = {
   rank: 1 | 2 | 3;
   item_id: string;

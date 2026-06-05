@@ -47,7 +47,7 @@ async function main() {
   const { buildQuestionSet } = await import('../src/lib/buildQuestionSet');
 
   console.log('1/4  Reading menu with Claude Vision...');
-  const items = await callVision(base64);
+  const { items } = await callVision(base64);
   console.log(`     -> ${items.length} items: ${items.map((i) => i.name).join(', ')}`);
 
   console.log('2/4  Analyzing menu...');

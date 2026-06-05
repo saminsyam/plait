@@ -59,7 +59,7 @@ export default function CameraScreen() {
     setBusy(true);
     setError(null);
     try {
-      const items = await callVision(shot.base64);
+      const { items } = await callVision(shot.base64);
       const questions = buildQuestionSet(analyzeMenu(items));
       session.setScan({ imageUri: shot.uri, items, questions });
       router.replace('/questions');
