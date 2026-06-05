@@ -6,7 +6,8 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "plait",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#111111",
     "ios": {
       "icon": "./assets/expo.icon"
     },
@@ -26,9 +27,15 @@
     "plugins": [
       "expo-router",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "plAIt needs your camera to read the menu in front of you."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#111111",
           "android": {
             "image": "./assets/images/splash-icon.png",
             "imageWidth": 76
