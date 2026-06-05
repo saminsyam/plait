@@ -43,19 +43,12 @@ different scenarios (goals, dietary restrictions, allergens).
 | Path | What |
 | --- | --- |
 | `src/config/profile.ts` | Hardcoded demo profile |
-| `src/lib/analyzeMenu.ts` | Pure-TS menu analysis (elimination-power scoring) |
-| `src/lib/buildQuestionSet.ts` | Pure-TS, menu-aware question funnel |
-| `src/lib/callVision.ts` | Claude Vision — reads the menu photo into JSON |
+| `src/lib/callVision.ts` | Claude Vision — reads the menu into items + menu_context |
+| `src/lib/questions.ts` | Fixed hunger question + Vision-written menu questions |
 | `src/lib/callReason.ts` | Claude reasoning — ranks the top 3 picks |
 | `src/app/` | Screens: `index` (home), `camera`, `questions`, `results` |
 
 ## Testing
-
-Offline (no API key needed) — exercises the question funnel on mock menus:
-
-```bash
-npx tsx scripts/test-funnel.ts
-```
 
 End-to-end against a real menu photo (uses your API key):
 

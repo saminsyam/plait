@@ -73,7 +73,7 @@ export default function QuestionsScreen() {
         <View style={[styles.progressFill, { width: `${((index + 1) / total) * 100}%` }]} />
       </View>
 
-      <Title style={styles.q}>{question.text}</Title>
+      <Title style={styles.q}>{question.question_text}</Title>
 
       <ScrollView contentContainerStyle={styles.options} showsVerticalScrollIndicator={false}>
         {question.options.map((opt) => {

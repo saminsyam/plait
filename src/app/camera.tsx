@@ -7,9 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Body, Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
-import { analyzeMenu } from '@/lib/analyzeMenu';
-import { buildQuestionSet } from '@/lib/buildQuestionSet';
 import { callVision } from '@/lib/callVision';
+import { buildQuestions } from '@/lib/questions';
 import { useSession } from '@/state/session';
 
 type Shot = { uri: string; base64: string };
@@ -59,8 +58,8 @@ export default function CameraScreen() {
     setBusy(true);
     setError(null);
     try {
-      const { items } = await callVision(shot.base64);
-      const questions = buildQuestionSet(analyzeMenu(items));
+      const { items, menu_context } = await callVision(shot.base64);
+      const questions = buildQuestions(menu_context);
       session.setScan({ imageUri: shot.uri, items, questions });
       router.replace('/questions');
     } catch (e) {

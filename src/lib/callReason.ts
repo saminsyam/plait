@@ -42,7 +42,7 @@ function describeAnswers(questions: Question[], answers: Answers): Record<string
     const value = answers[q.id];
     if (!value) continue;
     const label = q.options.find((o) => o.value === value)?.label ?? value;
-    out[q.text] = label;
+    out[q.question_text] = label;
   }
   return out;
 }

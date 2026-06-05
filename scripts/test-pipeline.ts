@@ -43,28 +43,23 @@ async function main() {
   // Dynamic imports so loadEnv() runs first.
   const { callVision } = await import('../src/lib/callVision');
   const { callReason } = await import('../src/lib/callReason');
-  const { analyzeMenu } = await import('../src/lib/analyzeMenu');
-  const { buildQuestionSet } = await import('../src/lib/buildQuestionSet');
+  const { buildQuestions } = await import('../src/lib/questions');
 
-  console.log('1/4  Reading menu with Claude Vision...');
-  const { items } = await callVision(base64);
+  console.log('1/3  Reading menu with Claude Vision...');
+  const { items, menu_context } = await callVision(base64);
   console.log(`     -> ${items.length} items: ${items.map((i) => i.name).join(', ')}`);
+  console.log(`     -> cuisine=${menu_context.cuisine_type}, dimensions=${menu_context.dimensions.map((d) => d.id).join(', ')}`);
 
-  console.log('2/4  Analyzing menu...');
-  const ctx = analyzeMenu(items);
-  console.log(`     -> cuisine=${ctx.cuisine_type}, uniform=${ctx.uniform_traits.join(', ')}`);
-
-  console.log('3/4  Building questions...');
-  const questions = buildQuestionSet(ctx);
+  console.log('2/3  Building questions (hunger + Vision dimensions)...');
+  const questions = buildQuestions(menu_context);
   const answers: Record<string, string> = {};
   for (const q of questions) {
-    // Mock answer: pick the first real option (skip "No preference").
-    const choice = q.options.find((o) => o.value !== 'any') ?? q.options[0];
+    const choice = q.options[0]; // mock answer: pick the first option
     answers[q.id] = choice.value;
-    console.log(`     Q (${q.id}) "${q.text}" -> ${choice.label}`);
+    console.log(`     Q (${q.id}) "${q.question_text}" -> ${choice.label}`);
   }
 
-  console.log('4/4  Reasoning for top 3 picks...');
+  console.log('3/3  Reasoning for top 3 picks...');
   const picks = await callReason({ items, questions, answers });
   console.log('\n===== TOP PICKS =====');
   for (const p of picks) {

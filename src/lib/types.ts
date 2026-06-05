@@ -14,50 +14,29 @@ export type MenuItem = {
   cuisine_type: string;
 };
 
-export type MenuContext = {
-  totalItems: number;
-  cuisine_type: string;
-  spice_distribution: { none: number; mild: number; medium: number; hot: number };
-  protein_split: Record<string, number>;
-  texture_split: Record<string, number>;
-  sub_protein_split: Record<string, number> | null; // salmon vs tuna on sushi
-  cooking_style_split: Record<string, number> | null; // karahi vs tandoor, baked vs fried
-  uniform_traits: string[]; // traits shared by >90% of items — never ask about these
-  high_signal_dimensions: HighSignalDimension[];
-};
-
-export type HighSignalDimension = {
-  dimension: string;
-  elimination_power: number; // 0–1, higher = splits menu more evenly
-  options_present: string[];
-};
-
 export type QuestionOption = {
   label: string;
   value: string;
-  emoji?: string;
+  emoji: string | null;
 };
 
+/**
+ * A question shown to the user. Questions are written by the Vision call
+ * (menu_context.dimensions), with one fixed hunger question prepended.
+ */
 export type Question = {
   id: string;
-  text: string;
+  question_text: string;
   options: QuestionOption[];
 };
 
 /** Map of questionId -> chosen option value. */
 export type Answers = Record<string, string>;
 
-/**
- * Menu context produced by the Vision call (Call 1). Distinct from the
- * pure-TS MenuContext above: these dimensions and questions are written by
- * the model directly from the menu, ready to render as questions.
- */
-export type VisionDimension = {
-  id: string;
-  question_text: string;
-  options: { label: string; value: string; emoji: string | null }[];
-};
+/** A model-written menu dimension is exactly a Question. */
+export type VisionDimension = Question;
 
+/** Menu context produced by the Vision call (Call 1). */
 export type VisionMenuContext = {
   cuisine_type: string;
   dimensions: VisionDimension[];
