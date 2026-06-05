@@ -3,20 +3,24 @@ import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CookingLoader } from '@/components/cooking-loader';
 import { Body, Loading, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { callReason } from '@/lib/callReason';
 import type { Answers } from '@/lib/types';
+import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
 
 export default function QuestionsScreen() {
   const router = useRouter();
   const session = useSession();
+  const { preferences, tdee } = useProfile();
   const { questions, items } = session;
 
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Answers>({});
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Guard: if we landed here without a scan, go home.
@@ -25,7 +29,7 @@ export default function QuestionsScreen() {
   }, [questions.length, router]);
 
   if (questions.length === 0) return <Loading message="Loading…" />;
-  if (busy) return <Loading message="Finding your top 3…" />;
+  if (busy) return <CookingLoader done={done} onReady={() => router.replace('/results')} title="Finding your top 3" />;
 
   const question = questions[index];
   const total = questions.length;
@@ -39,18 +43,27 @@ export default function QuestionsScreen() {
       return;
     }
 
-    // Last question answered → run the reasoning call.
+    // Last question answered → run the reasoning call behind the loader.
     setBusy(true);
+    setDone(false);
     setError(null);
-    try {
-      session.setAnswers(next);
-      const picks = await callReason({ items, questions, answers: next });
-      session.setPicks(picks);
-      router.replace('/results');
-    } catch (e) {
-      setBusy(false);
-      setError(e instanceof Error ? e.message : 'Could not get recommendations.');
-    }
+    session.setAnswers(next);
+    (async () => {
+      try {
+        const picks = await callReason({
+          items,
+          questions,
+          answers: next,
+          userPreferences: preferences ?? '',
+          tdeeContext: tdee,
+        });
+        session.setPicks(picks);
+        setDone(true);
+      } catch (e) {
+        setBusy(false);
+        setError(e instanceof Error ? e.message : 'Could not get recommendations.');
+      }
+    })();
   };
 
   const goBack = () => {

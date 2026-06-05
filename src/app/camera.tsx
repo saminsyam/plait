@@ -1,17 +1,20 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CookingLoader } from '@/components/cooking-loader';
 import { Body, Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { callVision } from '@/lib/callVision';
+import { prepareMenuImage } from '@/lib/image';
 import { buildQuestions } from '@/lib/questions';
 import { useSession } from '@/state/session';
 
-type Shot = { uri: string; base64: string };
+type Shot = { uri: string };
 
 export default function CameraScreen() {
   const router = useRouter();
@@ -20,52 +23,74 @@ export default function CameraScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [shot, setShot] = useState<Shot | null>(null);
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // --- Permission gate
+  // Pick an existing photo from the library — works even if camera is denied.
+  const pickFromLibrary = async () => {
+    setError(null);
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 1,
+      });
+      if (!res.canceled && res.assets[0]?.uri) setShot({ uri: res.assets[0].uri });
+    } catch {
+      setError('Could not open your photo library. Try again.');
+    }
+  };
+
+  // --- Cooking-steps loader while Vision reads the menu
+  if (busy) {
+    return <CookingLoader done={done} onReady={() => router.replace('/questions')} title="Reading your menu" />;
+  }
+
+  // --- Permission gate (still offer upload from library)
   if (!permission) {
     return <Loading message="Starting camera…" />;
   }
-  if (!permission.granted) {
+  if (!permission.granted && !shot) {
     return (
       <SafeAreaView style={styles.gate}>
         <Title style={{ fontSize: 32 }}>Camera access</Title>
         <Subtitle style={{ textAlign: 'center' }}>
-          plAIt needs your camera to read the menu in front of you.
+          plAIt needs your camera to read the menu in front of you — or upload a photo instead.
         </Subtitle>
         <PrimaryButton label="Allow camera" onPress={requestPermission} />
+        <PrimaryButton label="🖼  Upload a photo" variant="teal" onPress={pickFromLibrary} />
         <PrimaryButton label="Back" variant="ghost" onPress={() => router.back()} />
       </SafeAreaView>
     );
   }
 
-  // --- Working overlay while Vision reads the menu
-  if (busy) {
-    return <Loading message="Reading the menu…" />;
-  }
-
   const capture = async () => {
     try {
-      const photo = await cameraRef.current?.takePictureAsync({ base64: true, quality: 0.6 });
-      if (photo?.base64 && photo.uri) setShot({ uri: photo.uri, base64: photo.base64 });
+      const photo = await cameraRef.current?.takePictureAsync({ quality: 0.8 });
+      if (photo?.uri) setShot({ uri: photo.uri });
     } catch {
       setError('Could not take the photo. Try again.');
     }
   };
 
-  const confirm = async () => {
+  const confirm = () => {
     if (!shot) return;
     setBusy(true);
+    setDone(false);
     setError(null);
-    try {
-      const { items, menu_context } = await callVision(shot.base64);
-      const questions = buildQuestions(menu_context);
-      session.setScan({ imageUri: shot.uri, items, questions });
-      router.replace('/questions');
-    } catch (e) {
-      setBusy(false);
-      setError(e instanceof Error ? e.message : 'Something went wrong reading the menu.');
-    }
+    // Run the work alongside the loader; the loader gates navigation so we
+    // never jump to the next screen before its steps have played out.
+    (async () => {
+      try {
+        const prepared = await prepareMenuImage(shot.uri);
+        const { items, menu_context } = await callVision(prepared.base64);
+        const questions = buildQuestions(menu_context);
+        session.setScan({ imageUri: prepared.uri, items, questions });
+        setDone(true);
+      } catch (e) {
+        setBusy(false);
+        setError(e instanceof Error ? e.message : 'Something went wrong reading the menu.');
+      }
+    })();
   };
 
   // --- Preview / retake
@@ -101,6 +126,9 @@ export default function CameraScreen() {
             <View style={styles.shutterInner} />
           </Pressable>
         </View>
+        <Pressable onPress={pickFromLibrary} hitSlop={12} style={styles.uploadLink}>
+          <Text style={styles.uploadText}>🖼  Upload from library</Text>
+        </Pressable>
       </SafeAreaView>
     </View>
   );
@@ -152,6 +180,14 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     backgroundColor: Plait.color.coral,
   },
+  uploadLink: {
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: Plait.radius.pill,
+    overflow: 'hidden',
+  },
+  uploadText: { color: '#fff', fontSize: 15, fontWeight: '600', fontFamily: Plait.font.sans },
   preview: {
     flex: 1,
     borderRadius: Plait.radius.lg,

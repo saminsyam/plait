@@ -3,16 +3,30 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View, type ViewStyle } 
 
 import { Plait } from '@/constants/plait-theme';
 
-export function Title({ children, style }: { children: React.ReactNode; style?: object }) {
-  return <Text style={[styles.title, style]}>{children}</Text>;
+type TextProps = { children: React.ReactNode; style?: object; numberOfLines?: number };
+
+export function Title({ children, style, numberOfLines }: TextProps) {
+  return (
+    <Text style={[styles.title, style]} numberOfLines={numberOfLines}>
+      {children}
+    </Text>
+  );
 }
 
-export function Subtitle({ children, style }: { children: React.ReactNode; style?: object }) {
-  return <Text style={[styles.subtitle, style]}>{children}</Text>;
+export function Subtitle({ children, style, numberOfLines }: TextProps) {
+  return (
+    <Text style={[styles.subtitle, style]} numberOfLines={numberOfLines}>
+      {children}
+    </Text>
+  );
 }
 
-export function Body({ children, style }: { children: React.ReactNode; style?: object }) {
-  return <Text style={[styles.body, style]}>{children}</Text>;
+export function Body({ children, style, numberOfLines }: TextProps) {
+  return (
+    <Text style={[styles.body, style]} numberOfLines={numberOfLines}>
+      {children}
+    </Text>
+  );
 }
 
 export function PrimaryButton({

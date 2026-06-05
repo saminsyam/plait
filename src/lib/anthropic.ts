@@ -11,7 +11,10 @@
 export const ANTHROPIC_API_KEY =
   process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_API_KEY;
 
-export const MODEL = 'claude-sonnet-4-20250514';
+// Reasoning / ranking — quality matters most here, so we use Sonnet.
+export const MODEL = 'claude-sonnet-4-6';
+// Menu OCR + structuring — Haiku is much faster and plenty accurate for this.
+export const VISION_MODEL = 'claude-haiku-4-5';
 
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
 
@@ -36,10 +39,12 @@ type MessagesRequest = {
   system: string;
   content: ContentBlock[];
   maxTokens: number;
+  /** Override the model for this call (defaults to MODEL / Sonnet). */
+  model?: string;
 };
 
 /** Call the Messages API once and return the concatenated text output. */
-export async function callMessages({ system, content, maxTokens }: MessagesRequest): Promise<string> {
+export async function callMessages({ system, content, maxTokens, model = MODEL }: MessagesRequest): Promise<string> {
   if (!ANTHROPIC_API_KEY) throw new MissingKeyError();
 
   const res = await fetch(ENDPOINT, {
@@ -52,7 +57,7 @@ export async function callMessages({ system, content, maxTokens }: MessagesReque
       'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
-      model: MODEL,
+      model,
       max_tokens: maxTokens,
       system,
       messages: [{ role: 'user', content }],

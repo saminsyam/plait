@@ -33,6 +33,12 @@
         }
       ],
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "plAIt needs access to your photos so you can upload a menu image."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#111111",

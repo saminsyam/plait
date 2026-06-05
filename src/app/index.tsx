@@ -1,15 +1,24 @@
 import { useRouter } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Body, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
-import { MY_PROFILE } from '@/config/profile';
+import { Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
-
-const PROFILE_CHIPS = ['Halal', 'Shellfish-free', 'High-protein'];
+import { useProfile } from '@/state/profile';
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { loaded, tdeeCompleted, prefsCompleted, preferences, tdee } = useProfile();
+
+  // First launch → run onboarding in order: TDEE step, then preferences.
+  useEffect(() => {
+    if (!loaded) return;
+    if (!tdeeCompleted) router.replace('/tdee');
+    else if (!prefsCompleted) router.replace('/preferences');
+  }, [loaded, tdeeCompleted, prefsCompleted, router]);
+
+  if (!loaded || !tdeeCompleted || !prefsCompleted) return <Loading message="Loading…" />;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -20,17 +29,31 @@ export default function HomeScreen() {
         <Subtitle style={styles.tagline}>
           Point your camera at a menu. I&apos;ll find your three best dishes.
         </Subtitle>
+
+        <Pressable
+          style={styles.prefRow}
+          onPress={() => router.push('/preferences?edit=1')}
+          hitSlop={8}>
+          <Text style={styles.prefText} numberOfLines={1}>
+            {preferences}
+          </Text>
+          <Text style={styles.pencil}>✎</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.prefRow}
+          onPress={() => router.push('/tdee?edit=1')}
+          hitSlop={8}>
+          <Text style={styles.prefText} numberOfLines={1}>
+            {tdee
+              ? `🔥 ${tdee.calories.toLocaleString()} kcal · P${tdee.protein_g}g C${tdee.carbs_g}g F${tdee.fat_g}g`
+              : '🔥 Add daily goals'}
+          </Text>
+          <Text style={styles.pencil}>✎</Text>
+        </Pressable>
       </View>
 
       <View style={styles.footer}>
-        <View style={styles.chips}>
-          {PROFILE_CHIPS.map((c) => (
-            <View key={c} style={styles.chip}>
-              <Text style={styles.chipText}>{c}</Text>
-            </View>
-          ))}
-        </View>
-        <Body style={styles.notes}>Tuned for: {MY_PROFILE.notes}</Body>
         <PrimaryButton label="📷  Scan a menu" onPress={() => router.push('/camera')} />
       </View>
     </SafeAreaView>
@@ -56,31 +79,24 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     maxWidth: 320,
   },
+  prefRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Plait.space.sm,
+    maxWidth: 340,
+  },
+  prefText: {
+    flexShrink: 1,
+    color: Plait.color.textDim,
+    fontSize: 14,
+    fontFamily: Plait.font.sans,
+  },
+  pencil: {
+    color: Plait.color.teal,
+    fontSize: 15,
+  },
   footer: {
     paddingBottom: Plait.space.lg,
     gap: Plait.space.md,
-  },
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Plait.space.sm,
-  },
-  chip: {
-    backgroundColor: Plait.color.card,
-    borderRadius: Plait.radius.pill,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: Plait.color.border,
-  },
-  chipText: {
-    color: Plait.color.teal,
-    fontSize: 14,
-    fontWeight: '600',
-    fontFamily: Plait.font.sans,
-  },
-  notes: {
-    color: Plait.color.textDim,
-    fontSize: 14,
   },
 });

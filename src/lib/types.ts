@@ -54,4 +54,10 @@ export type Pick = {
   match_score: number; // 0–100
   why: string;
   flag: null | 'verify_halal' | 'contains_allergen' | 'spicier_than_stated';
+  // Estimated macros per serving (null if model couldn't estimate)
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  // Confidence in the macro estimates
+  confidence: 'high' | 'medium' | 'low' | null;
 };

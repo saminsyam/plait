@@ -1,31 +1,37 @@
 /**
- * Call 2 — Reasoning. Given the menu, the user's answers and their dietary
- * profile, return exactly 3 ranked picks (or fewer if nothing else fits).
+ * Call 2 — Reasoning. Given the menu, the user's answers, dietary preferences,
+ * and optional TDEE targets, return exactly 3 ranked picks with macro estimates.
  */
-import { MY_PROFILE } from '../config/profile';
 import { callMessages, parseJson } from './anthropic';
 import type { Answers, MenuItem, Pick, Question } from './types';
 
 const SYSTEM = `You are a friendly menu recommendation engine, like a great waiter.
-Given menu items, the user's question answers, and their dietary profile,
-return exactly 3 ranked picks.
+Given menu items, the user's question answers, free-text dietary preferences,
+and optional daily macro targets, return exactly 3 ranked picks.
 
-For each pick return:
+For each pick return JSON matching this shape exactly:
 {
   "rank": 1|2|3,
   "item_id": string,
   "match_score": number,        // 0–100
-  "why": string,                // one sentence, conversational, specific
-  "flag": null | "verify_halal" | "contains_allergen" | "spicier_than_stated"
+  "why": string,                // one sentence, conversational, specific to THIS dish
+  "flag": null | "verify_halal" | "contains_allergen" | "spicier_than_stated",
+  "protein_g": number | null,   // estimated grams per serving, null if unknown
+  "carbs_g": number | null,
+  "fat_g": number | null,
+  "confidence": "high" | "medium" | "low"  // confidence in the macro estimates
 }
 
+Confidence guide: high = nutrition info stated on menu, medium = can infer from
+ingredients, low = rough estimate from dish type only.
+
 Rules:
-- NEVER recommend anything violating dietary_restrictions or allergens
-- Halal confidence below 4/5 → set flag = "verify_halal"
-- Allergen present → set flag = "contains_allergen", never silently filter
-- "why" must be specific ("baked salmon, mild eel sauce") not generic
-  ("matches your preferences")
+- NEVER recommend anything that violates a hard restriction (halal, no shellfish, etc.)
+- Halal confidence below 4/5 → flag = "verify_halal"
+- Allergen present → flag = "contains_allergen", never silently filter
+- "why" must name specific ingredients, not generic phrases
 - If fewer than 3 items match cleanly, return 1 or 2 — don't force bad picks
+- If TDEE/macro targets are provided, prioritise dishes that fit the targets best
 
 Output ONLY a JSON array of picks. No preamble, no markdown fences.`;
 
@@ -33,9 +39,15 @@ type ReasonInput = {
   items: MenuItem[];
   questions: Question[];
   answers: Answers;
+  userPreferences: string;
+  tdeeContext?: {
+    calories: number;
+    protein_g: number;
+    carbs_g: number;
+    fat_g: number;
+  } | null;
 };
 
-/** Turn raw answer values into "Question -> chosen label" for the prompt. */
 function describeAnswers(questions: Question[], answers: Answers): Record<string, string> {
   const out: Record<string, string> = {};
   for (const q of questions) {
@@ -47,21 +59,35 @@ function describeAnswers(questions: Question[], answers: Answers): Record<string
   return out;
 }
 
-export async function callReason({ items, questions, answers }: ReasonInput): Promise<Pick[]> {
+export async function callReason({
+  items,
+  questions,
+  answers,
+  userPreferences,
+  tdeeContext,
+}: ReasonInput): Promise<Pick[]> {
   const userPayload = {
-    profile: MY_PROFILE,
     answers: describeAnswers(questions, answers),
     menu_items: items,
   };
 
+  let contextBlock = `User dietary preferences: "${userPreferences}"\n`;
+  if (tdeeContext) {
+    contextBlock +=
+      `User daily targets: ${tdeeContext.calories} kcal, ` +
+      `Protein ${tdeeContext.protein_g}g, Carbs ${tdeeContext.carbs_g}g, Fat ${tdeeContext.fat_g}g\n`;
+  }
+
   const raw = await callMessages({
     system: SYSTEM,
-    maxTokens: 1500,
+    maxTokens: 2000,
     content: [
       {
         type: 'text',
         text:
           'Pick the best dishes for me from this menu.\n\n' +
+          contextBlock +
+          '\n' +
           JSON.stringify(userPayload, null, 2),
       },
     ],
@@ -72,10 +98,17 @@ export async function callReason({ items, questions, answers }: ReasonInput): Pr
     throw new Error('No suitable picks were returned for this menu.');
   }
 
-  // Keep only picks that point at a real menu item, then sort by rank and cap at 3.
   const validIds = new Set(items.map((i) => i.id));
   return picks
     .filter((p) => validIds.has(p.item_id))
     .sort((a, b) => a.rank - b.rank)
-    .slice(0, 3);
+    .slice(0, 3)
+    .map((p) => ({
+      ...p,
+      // Coerce nulls in case model omits fields
+      protein_g: typeof p.protein_g === 'number' ? p.protein_g : null,
+      carbs_g: typeof p.carbs_g === 'number' ? p.carbs_g : null,
+      fat_g: typeof p.fat_g === 'number' ? p.fat_g : null,
+      confidence: p.confidence ?? null,
+    }));
 }

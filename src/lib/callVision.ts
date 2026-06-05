@@ -2,7 +2,7 @@
  * Call 1 — Vision. Read a menu photo and extract structured menu items plus a
  * model-written menu_context (the dimensions that meaningfully split THIS menu).
  */
-import { callMessages, parseJson } from './anthropic';
+import { callMessages, parseJson, VISION_MODEL } from './anthropic';
 import type { MenuItem, VisionDimension, VisionMenuContext, VisionResult } from './types';
 
 const SYSTEM = `You are a menu parser. Extract every menu item into structured JSON.
@@ -64,6 +64,7 @@ export async function callVision(
 ): Promise<VisionResult> {
   const raw = await callMessages({
     system: SYSTEM,
+    model: VISION_MODEL,
     maxTokens: 8000,
     content: [
       { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
