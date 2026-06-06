@@ -69,13 +69,27 @@ export async function callMessages({ system, content, maxTokens, model = MODEL }
     throw new Error(`Anthropic API error ${res.status}: ${body.slice(0, 500)}`);
   }
 
-  const json = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
+  const json = (await res.json()) as {
+    content?: Array<{ type: string; text?: string }>;
+    stop_reason?: string;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
   const text = (json.content ?? [])
     .filter((b) => b.type === 'text' && typeof b.text === 'string')
     .map((b) => b.text as string)
     .join('')
     .trim();
 
+  // Diagnostics — visible in the Metro console for every call.
+  console.log(
+    `[API] ${model} stop=${json.stop_reason} ` +
+      `in=${json.usage?.input_tokens} out=${json.usage?.output_tokens} text_len=${text.length}`
+  );
+
+  // The API's own signal that it ran out of room — definitive truncation.
+  if (json.stop_reason === 'max_tokens') {
+    throw new Error('TRUNCATED');
+  }
   if (!text) throw new Error('Anthropic API returned an empty response.');
   return text;
 }

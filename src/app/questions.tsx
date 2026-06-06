@@ -15,7 +15,7 @@ export default function QuestionsScreen() {
   const router = useRouter();
   const session = useSession();
   const { preferences, tdee } = useProfile();
-  const { questions, items } = session;
+  const { questions, items, budget, restaurantNotes } = session;
 
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Answers>({});
@@ -56,6 +56,8 @@ export default function QuestionsScreen() {
           answers: next,
           userPreferences: preferences ?? '',
           tdeeContext: tdee,
+          budget,
+          restaurantNotes,
         });
         session.setPicks(picks);
         setDone(true);

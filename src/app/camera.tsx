@@ -16,6 +16,19 @@ import { useSession } from '@/state/session';
 
 type Shot = { uri: string };
 
+/** Turn an error from the Vision pipeline into a friendly, actionable message. */
+function messageForError(e: unknown): string {
+  const code = e instanceof Error ? e.message : '';
+  switch (code) {
+    case 'TRUNCATED':
+      return 'This menu is too large to read at once. Try photographing one section at a time (e.g. just the mains).';
+    case 'PARSE_FAILED':
+      return 'Couldn’t read the menu — please retake the photo with better lighting.';
+    default:
+      return e instanceof Error ? e.message : 'Something went wrong reading the menu.';
+  }
+}
+
 export default function CameraScreen() {
   const router = useRouter();
   const session = useSession();
@@ -24,6 +37,7 @@ export default function CameraScreen() {
   const [shot, setShot] = useState<Shot | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  const [nextRoute, setNextRoute] = useState<'/questions' | '/budget'>('/questions');
   const [error, setError] = useState<string | null>(null);
 
   // Pick an existing photo from the library — works even if camera is denied.
@@ -42,7 +56,7 @@ export default function CameraScreen() {
 
   // --- Cooking-steps loader while Vision reads the menu
   if (busy) {
-    return <CookingLoader done={done} onReady={() => router.replace('/questions')} title="Reading your menu" />;
+    return <CookingLoader done={done} onReady={() => router.replace(nextRoute)} title="Reading your menu" />;
   }
 
   // --- Permission gate (still offer upload from library)
@@ -84,11 +98,20 @@ export default function CameraScreen() {
         const prepared = await prepareMenuImage(shot.uri);
         const { items, menu_context } = await callVision(prepared.base64);
         const questions = buildQuestions(menu_context);
-        session.setScan({ imageUri: prepared.uri, items, questions });
+        const hasPrices = items.some((i) => i.price > 0);
+        session.setScan({
+          imageUri: prepared.uri,
+          items,
+          questions,
+          hasPrices,
+          restaurantNotes: menu_context.restaurant_notes,
+        });
+        // If the menu showed prices, collect a budget before ranking.
+        setNextRoute(hasPrices ? '/budget' : '/questions');
         setDone(true);
       } catch (e) {
         setBusy(false);
-        setError(e instanceof Error ? e.message : 'Something went wrong reading the menu.');
+        setError(messageForError(e));
       }
     })();
   };

@@ -12,11 +12,24 @@ type SessionState = {
   questions: Question[];
   answers: Answers;
   picks: Pick[];
+  /** Whether the scanned menu actually showed prices. */
+  hasPrices: boolean;
+  /** Per-person budget the user set for this scan (null = no budget). */
+  budget: number | null;
+  /** Whole-menu footer/header notes from the Vision call. */
+  restaurantNotes: string[];
 };
 
 type SessionValue = SessionState & {
-  setScan: (input: { imageUri: string; items: MenuItem[]; questions: Question[] }) => void;
+  setScan: (input: {
+    imageUri: string;
+    items: MenuItem[];
+    questions: Question[];
+    hasPrices: boolean;
+    restaurantNotes: string[];
+  }) => void;
   setAnswers: (answers: Answers) => void;
+  setBudget: (budget: number | null) => void;
   setPicks: (picks: Pick[]) => void;
   reset: () => void;
 };
@@ -27,6 +40,9 @@ const EMPTY: SessionState = {
   questions: [],
   answers: {},
   picks: [],
+  hasPrices: false,
+  budget: null,
+  restaurantNotes: [],
 };
 
 const SessionContext = createContext<SessionValue | null>(null);
@@ -37,9 +53,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const value = useMemo<SessionValue>(
     () => ({
       ...state,
-      setScan: ({ imageUri, items, questions }) =>
-        setState({ imageUri, items, questions, answers: {}, picks: [] }),
+      setScan: ({ imageUri, items, questions, hasPrices, restaurantNotes }) =>
+        setState({
+          imageUri,
+          items,
+          questions,
+          hasPrices,
+          restaurantNotes,
+          answers: {},
+          picks: [],
+          budget: null,
+        }),
       setAnswers: (answers) => setState((s) => ({ ...s, answers })),
+      setBudget: (budget) => setState((s) => ({ ...s, budget })),
       setPicks: (picks) => setState((s) => ({ ...s, picks })),
       reset: () => setState(EMPTY),
     }),

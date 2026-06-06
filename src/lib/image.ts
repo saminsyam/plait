@@ -6,9 +6,10 @@
  */
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
-// Anthropic downsizes images so the long edge is ~1568px; matching that here
-// means we send the smallest payload that preserves full menu legibility.
-const MAX_EDGE = 1568;
+// Dense two-column menus need enough resolution for the small text to stay
+// legible; 1280px keeps the upload small (~150–300KB) while preserving OCR
+// accuracy. (1024 lost too much detail on tight menus.)
+const MAX_EDGE = 1280;
 
 export type PreparedImage = { uri: string; base64: string };
 
@@ -18,13 +19,10 @@ export type PreparedImage = { uri: string; base64: string };
  */
 export async function prepareMenuImage(uri: string): Promise<PreparedImage> {
   const context = ImageManipulator.manipulate(uri);
-  // Constrain the longer edge; expo-image-manipulator keeps aspect ratio when
-  // only one dimension is given, so we cap width (most menus are shot upright,
-  // but width-cap still bounds the pixel count enough to shrink the payload).
   context.resize({ width: MAX_EDGE });
   const ref = await context.renderAsync();
   const result = await ref.saveAsync({
-    compress: 0.6,
+    compress: 0.6, // enough for OCR; keeps the upload ~half the size of q0.8
     format: SaveFormat.JPEG,
     base64: true,
   });
@@ -32,5 +30,6 @@ export async function prepareMenuImage(uri: string): Promise<PreparedImage> {
   if (!result.base64) {
     throw new Error('Could not process the image. Try another photo.');
   }
+  console.log('[Vision] Compressed image base64 length:', result.base64.length);
   return { uri: result.uri, base64: result.base64 };
 }

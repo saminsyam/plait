@@ -40,6 +40,8 @@ export type VisionDimension = Question;
 export type VisionMenuContext = {
   cuisine_type: string;
   dimensions: VisionDimension[];
+  /** Whole-menu footer/header notes: halal/kosher certs, allergen policies, etc. */
+  restaurant_notes: string[];
 };
 
 /** What callVision returns: the parsed items plus the model's menu_context. */

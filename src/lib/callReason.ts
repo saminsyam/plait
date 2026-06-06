@@ -32,6 +32,10 @@ Rules:
 - "why" must name specific ingredients, not generic phrases
 - If fewer than 3 items match cleanly, return 1 or 2 — don't force bad picks
 - If TDEE/macro targets are provided, prioritise dishes that fit the targets best
+- If a per-person budget is provided, prefer dishes at or under it. You may include
+  ONE slightly-over pick if it's clearly the best fit, but say so in "why"
+- If a restaurant note states the kitchen is halal- or kosher-certified, you do NOT
+  need to set flag = "verify_halal" for its dishes — the certification covers it
 
 Output ONLY a JSON array of picks. No preamble, no markdown fences.`;
 
@@ -46,6 +50,10 @@ type ReasonInput = {
     carbs_g: number;
     fat_g: number;
   } | null;
+  /** Per-person budget the user set (null/undefined = no budget). */
+  budget?: number | null;
+  /** Whole-menu footer/header notes (halal certs, allergen policies, etc.). */
+  restaurantNotes?: string[];
 };
 
 function describeAnswers(questions: Question[], answers: Answers): Record<string, string> {
@@ -65,6 +73,8 @@ export async function callReason({
   answers,
   userPreferences,
   tdeeContext,
+  budget,
+  restaurantNotes,
 }: ReasonInput): Promise<Pick[]> {
   const userPayload = {
     answers: describeAnswers(questions, answers),
@@ -76,6 +86,14 @@ export async function callReason({
     contextBlock +=
       `User daily targets: ${tdeeContext.calories} kcal, ` +
       `Protein ${tdeeContext.protein_g}g, Carbs ${tdeeContext.carbs_g}g, Fat ${tdeeContext.fat_g}g\n`;
+  }
+  if (budget && budget > 0) {
+    contextBlock += `User budget: $${budget} per person — prefer dishes at or under this.\n`;
+  }
+  if (restaurantNotes && restaurantNotes.length > 0) {
+    contextBlock += `Restaurant notes (apply to whole menu): ${restaurantNotes
+      .map((n) => `"${n}"`)
+      .join('; ')}\n`;
   }
 
   const raw = await callMessages({

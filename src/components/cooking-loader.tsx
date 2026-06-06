@@ -1,17 +1,19 @@
 /**
- * Food-themed processing screen: four cooking steps that light up one by one,
- * with a rotating flavour-text line underneath. Replaces the plain spinner
- * during the Vision and Reasoning API calls.
+ * Food-themed processing screen. The hero is a tappable ingredient toy (a
+ * pleasant distraction during the wait); the cooking-step progress lives in a
+ * compact footer so loading is always glanceable underneath.
  *
  * Navigation is gated: the parent passes `done` (true once the API call
  * resolved) and `onReady` (where to go next). We only call `onReady` once the
  * final step's timer has fired AND the work is done — so the flow never skips
- * ahead and feels broken when the API happens to be fast.
+ * ahead and feels broken when the API happens to be fast. The toy never gates
+ * anything; it's thrown away the instant we navigate.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { IngredientToy } from '@/components/ingredient-toy';
 import { Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 
@@ -52,6 +54,13 @@ export function CookingLoader({
   const pulse = useRef(new Animated.Value(0)).current;
   const subOpacity = useRef(new Animated.Value(1)).current;
 
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => sub.remove();
+  }, []);
+
   // Step activation timers.
   useEffect(() => {
     const timers = ACTIVATE_AT.map((t, i) =>
@@ -63,27 +72,18 @@ export function CookingLoader({
     return () => timers.forEach(clearTimeout);
   }, []);
 
-  // Subtle pulse on the active step's icon.
+  // Subtle pulse on the active step's icon (skipped under reduced motion).
   useEffect(() => {
+    if (reduceMotion) return;
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: 1,
-          duration: 650,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulse, {
-          toValue: 0,
-          duration: 650,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
+        Animated.timing(pulse, { toValue: 1, duration: 650, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 650, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
       ])
     );
     loop.start();
     return () => loop.stop();
-  }, [pulse]);
+  }, [pulse, reduceMotion]);
 
   // Rotate the flavour-text line every 2s with a fade.
   useEffect(() => {
@@ -108,9 +108,13 @@ export function CookingLoader({
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.wrap}>
-        <Title style={styles.title}>{title}</Title>
+      <Title style={styles.title}>{title}</Title>
 
+      {/* Hero: the tappable ingredient toy fills the open middle. */}
+      <IngredientToy reduceMotion={reduceMotion} />
+
+      {/* Compact progress footer. */}
+      <View style={styles.footer}>
         <View style={styles.steps}>
           {STEPS.map((step, i) => {
             const isActive = i === active;
@@ -121,11 +125,11 @@ export function CookingLoader({
                 {isDone ? (
                   <Text style={styles.icon}>✅</Text>
                 ) : (
-                  <Animated.Text style={[styles.icon, isActive && { transform: [{ scale }] }]}>
+                  <Animated.Text style={[styles.icon, isActive && !reduceMotion && { transform: [{ scale }] }]}>
                     {step.icon}
                   </Animated.Text>
                 )}
-                <Text style={[styles.label, lit ? styles.labelOn : styles.labelOff]}>
+                <Text style={[styles.label, lit ? styles.labelOn : styles.labelOff]} numberOfLines={1}>
                   {step.label}
                 </Text>
               </View>
@@ -133,9 +137,7 @@ export function CookingLoader({
           })}
         </View>
 
-        <Animated.Text style={[styles.sub, { opacity: subOpacity }]}>
-          {SUBTEXTS[subIndex]}
-        </Animated.Text>
+        <Animated.Text style={[styles.sub, { opacity: subOpacity }]}>{SUBTEXTS[subIndex]}</Animated.Text>
       </View>
     </SafeAreaView>
   );
@@ -143,34 +145,37 @@ export function CookingLoader({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Plait.color.background },
-  wrap: {
-    flex: 1,
-    justifyContent: 'center',
+  title: {
+    fontSize: 30,
     paddingHorizontal: Plait.space.lg,
-    gap: Plait.space.lg,
+    paddingTop: Plait.space.lg,
   },
-  title: { fontSize: 30, marginBottom: Plait.space.sm },
-  steps: { gap: Plait.space.xs },
+  footer: {
+    paddingHorizontal: Plait.space.lg,
+    paddingBottom: Plait.space.md,
+    gap: Plait.space.xs,
+  },
+  steps: { gap: 2 },
   step: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Plait.space.md,
-    paddingVertical: 14,
-    paddingLeft: Plait.space.md,
-    borderLeftWidth: 3,
+    gap: Plait.space.sm,
+    paddingVertical: 7,
+    paddingLeft: Plait.space.sm,
+    borderLeftWidth: 2,
     borderLeftColor: 'transparent',
   },
   stepLit: { borderLeftColor: Plait.color.coral },
-  icon: { fontSize: 26, width: 34, textAlign: 'center' },
-  label: { fontSize: 18, fontFamily: Plait.font.sans, fontWeight: '600', flexShrink: 1 },
+  icon: { fontSize: 17, width: 24, textAlign: 'center' },
+  label: { fontSize: 14, fontFamily: Plait.font.sans, fontWeight: '600', flexShrink: 1 },
   labelOn: { color: Plait.color.text },
   labelOff: { color: Plait.color.textDim },
   sub: {
     color: Plait.color.textDim,
-    fontSize: 15,
+    fontSize: 13,
     fontStyle: 'italic',
     fontFamily: Plait.font.sans,
-    paddingLeft: Plait.space.md,
-    marginTop: Plait.space.sm,
+    paddingLeft: Plait.space.sm,
+    marginTop: 4,
   },
 });
