@@ -21,6 +21,7 @@ export default function RootLayout() {
             <Stack.Screen name="index" />
             <Stack.Screen name="tdee" />
             <Stack.Screen name="preferences" />
+            <Stack.Screen name="lookup" />
             <Stack.Screen name="camera" />
             <Stack.Screen name="budget" />
             <Stack.Screen name="questions" />

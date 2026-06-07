@@ -55,6 +55,7 @@ export default function HomeScreen() {
 
       <View style={styles.footer}>
         <PrimaryButton label="📷  Scan a menu" onPress={() => router.push('/camera')} />
+        <PrimaryButton label="🔍  Find a restaurant" variant="teal" onPress={() => router.push('/lookup')} />
       </View>
     </SafeAreaView>
   );
