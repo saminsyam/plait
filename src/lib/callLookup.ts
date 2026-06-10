@@ -23,8 +23,6 @@ import type { MenuItem, MenuOrientation, VisionMenuContext } from './types';
 const EMPTY_ORIENTATION: MenuOrientation = {
   summary: '',
   known_for: [],
-  interesting_facts: [],
-  first_timer_tips: [],
   signature_item_ids: [],
 };
 

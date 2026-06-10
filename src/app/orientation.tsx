@@ -1,8 +1,8 @@
 /**
  * Stage 1 — Orientation. A confident 10-second read of the restaurant. The
- * details live in tappable tiles (Known for / Can't go wrong with / Good to
- * know / First time? Try) that stay collapsed until tapped, so the page is a
- * glanceable summary instead of a wall of text. Reveal progressively.
+ * details live in tappable tiles (Known for / Menu highlights) that stay
+ * collapsed until tapped, so the page is a glanceable summary instead of a
+ * wall of text. Reveal progressively.
  */
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -57,9 +57,7 @@ export default function OrientationScreen() {
 
   const allTiles: TileDef[] = [
     { id: 'known', emoji: '🏆', title: 'Known for', items: o.known_for, variant: 'chips' },
-    { id: 'sure', emoji: '⭐', title: "Can't go wrong with", items: signatures, variant: 'bullets', bullet: '⭐' },
-    { id: 'facts', emoji: '💡', title: 'Good to know', items: o.interesting_facts, variant: 'bullets', bullet: '•' },
-    { id: 'first', emoji: '👋', title: 'First time? Try', items: o.first_timer_tips, variant: 'bullets', bullet: '👉' },
+    { id: 'sure', emoji: '⭐', title: 'Menu highlights', items: signatures, variant: 'bullets', bullet: '⭐' },
   ];
   const tiles = allTiles.filter((t) => t.items.length > 0);
 

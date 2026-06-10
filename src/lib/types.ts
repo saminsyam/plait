@@ -45,10 +45,6 @@ export type MenuOrientation = {
   summary: string;
   /** What the restaurant is known for / its strengths. */
   known_for: string[];
-  /** A couple of interesting facts about the cuisine or menu. */
-  interesting_facts: string[];
-  /** What first-time visitors to this cuisine commonly enjoy. */
-  first_timer_tips: string[];
   /** item ids of signature / can't-go-wrong dishes. */
   signature_item_ids: string[];
 };

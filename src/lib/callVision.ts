@@ -42,8 +42,6 @@ In menu_context.orientation, act like a great server giving a 10-second intro
 BEFORE the guest reads anything. Be concise and confident:
 - "summary": 1–2 sentences on what kind of restaurant this is.
 - "known_for": a few of its strengths / standout categories.
-- "interesting_facts": 1–2 genuinely interesting facts about this cuisine or menu.
-- "first_timer_tips": what a newcomer to this cuisine commonly enjoys here.
 - "signature_dish_ids": ids of 1–3 can't-go-wrong dishes (use the ids above).
 
 Also look for any footer or header text that applies to the entire menu —
@@ -57,8 +55,6 @@ The menu_context shape is:
   "orientation": {
     "summary": string,
     "known_for": string[],
-    "interesting_facts": string[],
-    "first_timer_tips": string[],
     "signature_dish_ids": string[]
   },
   "restaurant_notes": string[]
@@ -332,8 +328,6 @@ function normalizeOrientation(raw: unknown): MenuOrientation {
   return {
     summary: typeof o.summary === 'string' ? o.summary : '',
     known_for: arr(o.known_for),
-    interesting_facts: arr(o.interesting_facts),
-    first_timer_tips: arr(o.first_timer_tips),
     signature_item_ids: arr(o.signature_dish_ids ?? o.signature_item_ids),
   };
 }
