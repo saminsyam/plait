@@ -26,6 +26,7 @@ export default function RootLayout() {
             <Stack.Screen name="orientation" />
             <Stack.Screen name="questions" />
             <Stack.Screen name="results" />
+            <Stack.Screen name="stats" />
           </Stack>
         </SessionProvider>
       </ProfileProvider>

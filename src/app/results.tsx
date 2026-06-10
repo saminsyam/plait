@@ -300,16 +300,19 @@ export default function ResultsScreen() {
   );
 }
 
-/** Dim one-liner with the app-session API spend (from the usage ledger). */
+/** Dim one-liner with the app-session API spend — taps through to /stats. */
 function UsageLine() {
+  const router = useRouter();
   const { totals } = getUsage();
   if (totals.calls === 0) return null;
   const tokens = totals.inputTokens + totals.outputTokens;
   return (
-    <Text style={styles.usageLine}>
-      ⚡ {totals.calls} API calls · {(tokens / 1000).toFixed(1)}k tokens · {formatUsd(totals.costUsd)}{' '}
-      this session
-    </Text>
+    <Pressable onPress={() => router.push('/stats')} hitSlop={8}>
+      <Text style={styles.usageLine}>
+        ⚡ {totals.calls} API calls · {(tokens / 1000).toFixed(1)}k tokens ·{' '}
+        {formatUsd(totals.costUsd)} this session ›
+      </Text>
+    </Pressable>
   );
 }
 

@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
+import { Loading, NavLink, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { useSession } from '@/state/session';
 
@@ -38,7 +38,8 @@ type TileDef = {
 
 export default function OrientationScreen() {
   const router = useRouter();
-  const { menuContext, items, candidates } = useSession();
+  const session = useSession();
+  const { menuContext, items, candidates } = session;
   const [open, setOpen] = useState<Set<string>>(new Set());
 
   // Guard: no scan in progress → home.
@@ -74,6 +75,16 @@ export default function OrientationScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      {/* Abandon this scan and go home — the session is per-scan, so reset. */}
+      <View style={styles.topBar}>
+        <NavLink
+          label="✕ Start over"
+          onPress={() => {
+            session.reset();
+            router.replace('/');
+          }}
+        />
+      </View>
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           {cuisine && <Text style={styles.kicker}>{cuisine.toUpperCase()}</Text>}
@@ -138,7 +149,8 @@ export default function OrientationScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Plait.color.background },
-  scroll: { paddingHorizontal: Plait.space.lg, paddingTop: Plait.space.lg, paddingBottom: Plait.space.lg, gap: Plait.space.lg },
+  topBar: { paddingHorizontal: Plait.space.lg, paddingTop: Plait.space.sm },
+  scroll: { paddingHorizontal: Plait.space.lg, paddingTop: Plait.space.md, paddingBottom: Plait.space.lg, gap: Plait.space.lg },
   header: { gap: Plait.space.sm },
   kicker: { color: Plait.color.coral, fontSize: 13, fontWeight: '800', letterSpacing: 1.5, fontFamily: Plait.font.sans },
   title: { fontSize: 36 },

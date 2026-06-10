@@ -30,7 +30,7 @@ type SessionState = {
   /** Narrowing questions actually asked + the user's answers (for reasoning/detail). */
   questions: Question[];
   answers: Answers;
-  /** Chosen spice tolerance (1–5), or null before the slider is set. */
+  /** Chosen spice tolerance (1 mild · 2 medium · 3 hot), or null before it's set. */
   spice: number | null;
   picks: Pick[];
   /** Whole-menu footer/header notes (mirrors menuContext.restaurant_notes). */

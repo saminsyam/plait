@@ -1,6 +1,6 @@
 /**
  * Stage 2 — Preference discovery (narrowing). The deterministic engine drives
- * this entirely on-device: a constant 5-level spice slider, then a short series
+ * this entirely on-device: a constant 3-way spice selector, then a short series
  * of binary questions, each chosen for maximum information gain against the
  * REMAINING candidates. When the pool is small enough, Stage 3 (reasoning) runs
  * over just that handful — never the whole menu.
@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CookingLoader } from '@/components/cooking-loader';
 import { SpiceSlider } from '@/components/spice-slider';
-import { Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
+import { Loading, NavLink, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { useProgressSteps } from '@/hooks/use-progress-steps';
 import { callReason } from '@/lib/callReason';
@@ -154,6 +154,7 @@ export default function QuestionsScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
+          <NavLink label="‹ Menu intro" onPress={() => router.replace('/orientation')} />
           <Text style={styles.progress}>First, the basics</Text>
         </View>
         <View style={styles.body}>
@@ -180,6 +181,8 @@ export default function QuestionsScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
+        {/* Re-entering restarts narrowing from the full pool — that's the point. */}
+        <NavLink label="‹ Restart" onPress={() => router.replace('/orientation')} />
         <Text style={styles.progress}>{pool.length} dishes in the running</Text>
       </View>
       <Title style={styles.q}>{question.question}</Title>
@@ -202,7 +205,12 @@ export default function QuestionsScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Plait.color.background, paddingHorizontal: Plait.space.lg },
-  header: { paddingVertical: Plait.space.sm },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Plait.space.sm,
+  },
   progress: { color: Plait.color.textDim, fontSize: 14, fontFamily: Plait.font.sans },
   body: { flex: 1, justifyContent: 'center', gap: Plait.space.md },
   q: { fontSize: 32, lineHeight: 40, marginBottom: Plait.space.sm },

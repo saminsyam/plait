@@ -61,6 +61,26 @@ export function PrimaryButton({
   );
 }
 
+/**
+ * Small dim text link for header navigation (back / close / start over).
+ * One shared style so every screen's escape hatch looks and feels the same.
+ */
+export function NavLink({
+  label,
+  onPress,
+  style,
+}: {
+  label: string;
+  onPress: () => void;
+  style?: object;
+}) {
+  return (
+    <Pressable onPress={onPress} hitSlop={12} style={({ pressed }) => pressed && { opacity: 0.6 }}>
+      <Text style={[styles.navLink, style]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 export function Loading({ message }: { message: string }) {
   return (
     <View style={styles.loading}>
@@ -111,5 +131,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: Plait.space.xl,
     backgroundColor: Plait.color.background,
+  },
+  navLink: {
+    color: Plait.color.textDim,
+    fontSize: 17,
+    fontFamily: Plait.font.sans,
   },
 });

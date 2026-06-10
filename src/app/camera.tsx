@@ -7,7 +7,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CookingLoader } from '@/components/cooking-loader';
-import { Body, Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
+import { Body, Loading, NavLink, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { useProgressSteps } from '@/hooks/use-progress-steps';
 import { callVision } from '@/lib/callVision';
@@ -151,6 +151,9 @@ export default function CameraScreen() {
   if (shot) {
     return (
       <SafeAreaView style={styles.safe}>
+        <View style={styles.previewTop}>
+          <NavLink label="‹ Back" onPress={() => router.back()} />
+        </View>
         <Image source={{ uri: shot.uri }} style={styles.preview} contentFit="cover" />
         {error && <Body style={styles.error}>{error}</Body>}
         <View style={styles.controls}>
@@ -173,6 +176,10 @@ export default function CameraScreen() {
     <View style={styles.full}>
       <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
       <SafeAreaView style={styles.overlay}>
+        <View style={styles.overlayTop}>
+          <NavLink label="‹ Back" onPress={() => router.back()} style={styles.backOnDark} />
+        </View>
+        <View style={styles.spacer} />
         <Body style={styles.hint}>Frame the whole menu, then tap to capture</Body>
         {error && <Body style={styles.error}>{error}</Body>}
         <View style={styles.shutterRow}>
@@ -205,11 +212,25 @@ const styles = StyleSheet.create({
   },
   overlay: {
     flex: 1,
-    justifyContent: 'flex-end',
     alignItems: 'center',
     paddingBottom: Plait.space.xl,
     gap: Plait.space.md,
   },
+  overlayTop: {
+    alignSelf: 'flex-start',
+    paddingTop: Plait.space.sm,
+    paddingLeft: Plait.space.lg,
+  },
+  backOnDark: {
+    color: '#fff',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: Plait.radius.pill,
+    overflow: 'hidden',
+  },
+  spacer: { flex: 1 },
+  previewTop: { paddingBottom: Plait.space.sm },
   hint: {
     color: '#fff',
     backgroundColor: 'rgba(0,0,0,0.5)',

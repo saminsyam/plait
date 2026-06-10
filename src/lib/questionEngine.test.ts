@@ -78,10 +78,15 @@ test('nextQuestion returns null when no facet can split the pool', () => {
   assert.equal(nextQuestion(one, new Set()), null);
 });
 
-test('filterBySpice keeps dishes at/below tolerance, falls back if all too hot', () => {
-  assert.ok(!filterBySpice(menu, 3).some((d) => d.name === 'Chili Basil Chicken')); // 4 > 3
+test('filterBySpice maps tolerance to dish heat, falls back if all too hot', () => {
+  // medium (2) admits dish heat ≤3, so the level-4 dish is cut…
+  assert.ok(!filterBySpice(menu, 2).some((d) => d.name === 'Chili Basil Chicken'));
+  // …while hot (3) admits everything.
+  assert.ok(filterBySpice(menu, 3).some((d) => d.name === 'Chili Basil Chicken'));
+  // mild (1) admits only dish heat ≤1 (the level-2 lamb curry is cut).
+  assert.ok(!filterBySpice(menu, 1).some((d) => d.name === 'Lamb Curry'));
   const fiery = [dish({ name: 'Ghost Curry', spice_level: 5 })];
-  assert.deepEqual(filterBySpice(fiery, 1), fiery); // nothing ≤1 → keep pool
+  assert.deepEqual(filterBySpice(fiery, 1), fiery); // nothing survives → keep pool
 });
 
 test('shouldStopNarrowing stops on small pool or question cap', () => {
@@ -93,15 +98,15 @@ test('shouldStopNarrowing stops on small pool or question cap', () => {
 test('choicesToQA round-trips spice + facet choices into Question/Answers', () => {
   const q = nextQuestion(menu, new Set())!;
   const chickenOpt = q.options.find((o) => o.value === 'chicken')!;
-  const { questions, answers } = choicesToQA([spiceChoice(4), facetChoice(q, chickenOpt)]);
+  const { questions, answers } = choicesToQA([spiceChoice(3), facetChoice(q, chickenOpt)]);
   assert.equal(questions.length, 2);
-  assert.equal(answers['spice'], '4');
+  assert.equal(answers['spice'], '3');
   assert.equal(answers['protein'], 'chicken');
   assert.equal(questions[1].options[0].label, 'Chicken');
 });
 
 test('a full narrowing run converges to a small candidate set', () => {
-  let pool = filterBySpice(menu, 5);
+  let pool = filterBySpice(menu, 3);
   const asked = new Set<string>();
   let dynamic = 0;
   while (!shouldStopNarrowing(pool, dynamic)) {

@@ -22,7 +22,10 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <Text style={styles.version}>{APP_VERSION}</Text>
+      {/* Version badge doubles as the door to session stats. */}
+      <Pressable onPress={() => router.push('/stats')} hitSlop={8}>
+        <Text style={styles.version}>{APP_VERSION} ⚡</Text>
+      </Pressable>
       <View style={styles.hero}>
         <Title style={styles.logo}>
           pl<Text style={{ color: Plait.color.coral }}>AI</Text>t

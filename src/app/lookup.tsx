@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CookingLoader } from '@/components/cooking-loader';
-import { Body, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
+import { Body, NavLink, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { useProgressSteps } from '@/hooks/use-progress-steps';
 import { buildScanFromLookup, callLookup, type LookupResult } from '@/lib/callLookup';
@@ -120,9 +120,7 @@ export default function LookupScreen() {
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
-            <Text style={styles.back}>‹ Back</Text>
-          </Pressable>
+          <NavLink label="‹ Back" onPress={() => router.back()} />
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
@@ -303,7 +301,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Plait.color.background },
   flex: { flex: 1 },
   header: { paddingHorizontal: Plait.space.lg, paddingTop: Plait.space.sm },
-  back: { color: Plait.color.textDim, fontSize: 17, fontFamily: Plait.font.sans },
   scroll: { flexGrow: 1, paddingHorizontal: Plait.space.lg, paddingTop: Plait.space.md, paddingBottom: Plait.space.xl },
   gap: { gap: Plait.space.md },
   title: { fontSize: 34, lineHeight: 42 },

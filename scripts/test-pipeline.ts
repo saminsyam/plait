@@ -74,9 +74,9 @@ async function main() {
   }
 
   console.log('3/4  Narrowing with the deterministic engine (no model, mock answers)...');
-  // Mock the user: spice 3, then always take the top option of each question.
-  const choices = [engine.spiceChoice(3)];
-  let pool = engine.filterBySpice(rankable, 3);
+  // Mock the user: medium spice, then always take the top option of each question.
+  const choices = [engine.spiceChoice(2)];
+  let pool = engine.filterBySpice(rankable, 2);
   const asked = new Set<string>();
   let dynamic = 0;
   while (!engine.shouldStopNarrowing(pool, dynamic)) {

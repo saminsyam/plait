@@ -10,32 +10,40 @@
  * It is PURE and runs entirely on-device against the structured menu model — it
  * sends NOTHING to a language model. Zero tokens per question. The LLM is
  * reserved for orientation (Stage 1) and reasoning over the small final
- * candidate set (Stage 3). The one fixed question is spice (a 5-level slider).
+ * candidate set (Stage 3). The one fixed question is spice (a 3-way selector).
  */
 import type { Answers, MenuItem, Question } from './types';
 
 // ---------------------------------------------------------------------------
-// Spice — the one constant question (5-level slider)
+// Spice — the one constant question (3-way selector)
 // ---------------------------------------------------------------------------
 
-export type SpiceLevel = 1 | 2 | 3 | 4 | 5;
+export type SpiceLevel = 1 | 2 | 3;
 
-export const SPICE_LEVELS: { level: SpiceLevel; label: string; emoji: string }[] = [
-  { level: 1, label: 'Keep it gentle', emoji: '🧊' },
-  { level: 2, label: 'A little warmth', emoji: '🌤️' },
-  { level: 3, label: 'Medium heat', emoji: '🌶️' },
-  { level: 4, label: 'Bring some fire', emoji: '🔥' },
-  { level: 5, label: 'As hot as it gets', emoji: '🥵' },
+export const SPICE_LEVELS: { level: SpiceLevel; label: string; emoji: string; hint: string }[] = [
+  { level: 1, label: 'Mild', emoji: '🧊', hint: 'Keep it gentle — no surprises' },
+  { level: 2, label: 'Medium', emoji: '🌶️', hint: 'Some kick is welcome' },
+  { level: 3, label: 'Hot', emoji: '🔥', hint: 'Bring the fire' },
 ];
 
-export const DEFAULT_SPICE: SpiceLevel = 3;
+export const DEFAULT_SPICE: SpiceLevel = 2;
 
 /**
- * Keep dishes at or below the chosen heat. Unknown spice (0) always stays. If
- * nothing survives, return the pool unchanged rather than stranding the user.
+ * Dishes carry a 0–5 spice_level from the enrichment model; the user picks one
+ * of three tolerances. Map tolerance → the hottest dish heat we'll keep:
+ * mild admits only barely-spiced food, medium cuts the genuinely fiery end,
+ * hot admits everything.
+ */
+const MAX_DISH_HEAT: Record<SpiceLevel, number> = { 1: 1, 2: 3, 3: 5 };
+
+/**
+ * Keep dishes at or below the chosen tolerance. Unknown spice (0) always
+ * stays. If nothing survives, return the pool unchanged rather than stranding
+ * the user.
  */
 export function filterBySpice(pool: MenuItem[], tolerance: SpiceLevel): MenuItem[] {
-  const kept = pool.filter((i) => (i.spice_level ?? 0) <= tolerance);
+  const max = MAX_DISH_HEAT[tolerance] ?? 5;
+  const kept = pool.filter((i) => (i.spice_level ?? 0) <= max);
   return kept.length > 0 ? kept : pool;
 }
 
