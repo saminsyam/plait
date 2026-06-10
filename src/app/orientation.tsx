@@ -1,8 +1,9 @@
 /**
  * Stage 1 — Orientation. A confident 10-second read of the restaurant. The
- * details live in tappable tiles (Known for / Menu highlights) that stay
- * collapsed until tapped, so the page is a glanceable summary instead of a
- * wall of text. Reveal progressively.
+ * summary, cuisine kicker, and Menu highlights render through the shared
+ * <RestaurantSummary> (also used by the standalone lookup page); the
+ * menu-specific "Known for" tile stays collapsed until tapped so the page is
+ * a glanceable summary instead of a wall of text.
  */
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -18,6 +19,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { RestaurantSummary } from '@/components/restaurant-summary';
 import { Loading, NavLink, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { useSession } from '@/state/session';
@@ -57,7 +59,6 @@ export default function OrientationScreen() {
 
   const allTiles: TileDef[] = [
     { id: 'known', emoji: '🏆', title: 'Known for', items: o.known_for, variant: 'chips' },
-    { id: 'sure', emoji: '⭐', title: 'Menu highlights', items: signatures, variant: 'bullets', bullet: '⭐' },
   ];
   const tiles = allTiles.filter((t) => t.items.length > 0);
 
@@ -85,10 +86,17 @@ export default function OrientationScreen() {
       </View>
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          {cuisine && <Text style={styles.kicker}>{cuisine.toUpperCase()}</Text>}
           <Title style={styles.title}>Here&apos;s the place</Title>
-          {!!o.summary && <Subtitle style={styles.summary}>{o.summary}</Subtitle>}
         </View>
+
+        <RestaurantSummary
+          mode="scan"
+          cuisine={cuisine}
+          summary={o.summary}
+          // Crowd favorites arrive with the review-lookup flow; hidden until wired.
+          crowdFavorites={{ kind: 'hidden' }}
+          menuHighlights={signatures}
+        />
 
         {tiles.length > 0 ? (
           <View style={styles.tiles}>
@@ -150,7 +158,6 @@ const styles = StyleSheet.create({
   topBar: { paddingHorizontal: Plait.space.lg, paddingTop: Plait.space.sm },
   scroll: { paddingHorizontal: Plait.space.lg, paddingTop: Plait.space.md, paddingBottom: Plait.space.lg, gap: Plait.space.lg },
   header: { gap: Plait.space.sm },
-  kicker: { color: Plait.color.coral, fontSize: 13, fontWeight: '800', letterSpacing: 1.5, fontFamily: Plait.font.sans },
   title: { fontSize: 36 },
   summary: { fontSize: 17, lineHeight: 25 },
 
