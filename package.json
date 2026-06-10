@@ -36,6 +36,8 @@
   "devDependencies": {
     "@types/node": "^25.9.1",
     "@types/react": "~19.1.10",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~10.0.0",
     "typescript": "~5.9.2"
   },
   "scripts": {
@@ -44,7 +46,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test": "npx tsx --test src/lib/*.test.ts",
+    "test:watch": "npx tsx --test --watch src/lib/*.test.ts",
+    "eval": "npx tsx scripts/eval.ts"
   },
   "private": true
 }

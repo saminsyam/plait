@@ -5,29 +5,30 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
+import { APP_VERSION } from '@/constants/version';
 import { useProfile } from '@/state/profile';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { loaded, tdeeCompleted, prefsCompleted, preferences, tdee } = useProfile();
+  const { loaded, prefsCompleted, preferences, tdee } = useProfile();
 
-  // First launch → run onboarding in order: TDEE step, then preferences.
+  // First launch → capture dietary needs once. (TDEE is deferred for now.)
   useEffect(() => {
     if (!loaded) return;
-    if (!tdeeCompleted) router.replace('/tdee');
-    else if (!prefsCompleted) router.replace('/preferences');
-  }, [loaded, tdeeCompleted, prefsCompleted, router]);
+    if (!prefsCompleted) router.replace('/preferences');
+  }, [loaded, prefsCompleted, router]);
 
-  if (!loaded || !tdeeCompleted || !prefsCompleted) return <Loading message="Loading…" />;
+  if (!loaded || !prefsCompleted) return <Loading message="Loading…" />;
 
   return (
     <SafeAreaView style={styles.safe}>
+      <Text style={styles.version}>{APP_VERSION}</Text>
       <View style={styles.hero}>
         <Title style={styles.logo}>
           pl<Text style={{ color: Plait.color.coral }}>AI</Text>t
         </Title>
         <Subtitle style={styles.tagline}>
-          Point your camera at a menu. I&apos;ll find your three best dishes.
+          Snap a menu. I&apos;ll be your waiter and walk you to the right dish.
         </Subtitle>
 
         <Pressable
@@ -40,14 +41,12 @@ export default function HomeScreen() {
           <Text style={styles.pencil}>✎</Text>
         </Pressable>
 
-        <Pressable
-          style={styles.prefRow}
-          onPress={() => router.push('/tdee?edit=1')}
-          hitSlop={8}>
+        {/* Daily goals (TDEE) — optional; ranking uses them when set. */}
+        <Pressable style={styles.prefRow} onPress={() => router.push('/tdee?edit=1')} hitSlop={8}>
           <Text style={styles.prefText} numberOfLines={1}>
             {tdee
-              ? `🔥 ${tdee.calories.toLocaleString()} kcal · P${tdee.protein_g}g C${tdee.carbs_g}g F${tdee.fat_g}g`
-              : '🔥 Add daily goals'}
+              ? `🔥 ${tdee.calories.toLocaleString()} kcal · P${tdee.protein_g} C${tdee.carbs_g} F${tdee.fat_g}`
+              : '🔥 Set daily calorie & macro goals'}
           </Text>
           <Text style={styles.pencil}>✎</Text>
         </Pressable>
@@ -55,7 +54,9 @@ export default function HomeScreen() {
 
       <View style={styles.footer}>
         <PrimaryButton label="📷  Scan a menu" onPress={() => router.push('/camera')} />
-        <PrimaryButton label="🔍  Find a restaurant" variant="teal" onPress={() => router.push('/lookup')} />
+        {/* Restaurant lookup (/lookup) is hidden for now — its web-search call
+            costs several times a photo scan (~$0.11/lookup). The flow stays
+            fully wired; restore the button here to re-enable. */}
       </View>
     </SafeAreaView>
   );
@@ -66,6 +67,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Plait.color.background,
     paddingHorizontal: Plait.space.lg,
+  },
+  version: {
+    color: Plait.color.textDim,
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: Plait.font.sans,
+    letterSpacing: 0.5,
+    textAlign: 'right',
+    paddingTop: Plait.space.sm,
   },
   hero: {
     flex: 1,

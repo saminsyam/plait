@@ -1,22 +1,39 @@
 /**
- * Single-user in-memory session for one menu scan. No persistence — a fresh
- * scan overwrites the last. Holds everything the screens hand off to each other.
+ * Single-user in-memory session for one menu scan, modeled as the AI-waiter's
+ * working state. A fresh scan overwrites the last.
+ *
+ * Flow: camera → setScan (menu + orientation + gated candidate pool) →
+ * orientation screen → narrowing (engine filters `candidates`) → setOutcome
+ * (recorded questions/answers + ranked picks) → results.
+ *
+ * The deterministic hard-gate runs ONCE at scan time: blocked items never enter
+ * `candidates`, and `verifyById` carries the "ask staff" reasons for the verify
+ * survivors so reasoning can flag them.
  */
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 
-import type { Answers, MenuItem, Pick, Question } from '@/lib/types';
+import type { FilteredItem } from '@/lib/dietaryFilter';
+import type { Answers, MenuItem, Pick, Question, VisionMenuContext } from '@/lib/types';
 
 type SessionState = {
   imageUri: string | null;
+  /** Every dish read from the menu (full enriched model). */
   items: MenuItem[];
+  /** Cuisine + Stage-1 orientation + restaurant notes. */
+  menuContext: VisionMenuContext | null;
+  /** Safe-to-recommend pool the narrowing engine works on (allowed + verify). */
+  candidates: MenuItem[];
+  /** item_id → "verify with staff" reasons for verify survivors. */
+  verifyById: Record<string, string[]>;
+  /** Items the hard-gate removed before ranking, with reasons (the avoid list). */
+  blocked: FilteredItem[];
+  /** Narrowing questions actually asked + the user's answers (for reasoning/detail). */
   questions: Question[];
   answers: Answers;
+  /** Chosen spice tolerance (1–5), or null before the slider is set. */
+  spice: number | null;
   picks: Pick[];
-  /** Whether the scanned menu actually showed prices. */
-  hasPrices: boolean;
-  /** Per-person budget the user set for this scan (null = no budget). */
-  budget: number | null;
-  /** Whole-menu footer/header notes from the Vision call. */
+  /** Whole-menu footer/header notes (mirrors menuContext.restaurant_notes). */
   restaurantNotes: string[];
 };
 
@@ -24,24 +41,27 @@ type SessionValue = SessionState & {
   setScan: (input: {
     imageUri: string;
     items: MenuItem[];
-    questions: Question[];
-    hasPrices: boolean;
-    restaurantNotes: string[];
+    menuContext: VisionMenuContext;
+    candidates: MenuItem[];
+    verifyById: Record<string, string[]>;
+    blocked: FilteredItem[];
   }) => void;
-  setAnswers: (answers: Answers) => void;
-  setBudget: (budget: number | null) => void;
-  setPicks: (picks: Pick[]) => void;
+  /** Record the narrowing result + ranked picks once Stage 3 completes. */
+  setOutcome: (input: { questions: Question[]; answers: Answers; spice: number; picks: Pick[] }) => void;
   reset: () => void;
 };
 
 const EMPTY: SessionState = {
   imageUri: null,
   items: [],
+  menuContext: null,
+  candidates: [],
+  verifyById: {},
+  blocked: [],
   questions: [],
   answers: {},
+  spice: null,
   picks: [],
-  hasPrices: false,
-  budget: null,
   restaurantNotes: [],
 };
 
@@ -53,20 +73,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const value = useMemo<SessionValue>(
     () => ({
       ...state,
-      setScan: ({ imageUri, items, questions, hasPrices, restaurantNotes }) =>
+      setScan: ({ imageUri, items, menuContext, candidates, verifyById, blocked }) =>
         setState({
+          ...EMPTY,
           imageUri,
           items,
-          questions,
-          hasPrices,
-          restaurantNotes,
-          answers: {},
-          picks: [],
-          budget: null,
+          menuContext,
+          candidates,
+          verifyById,
+          blocked,
+          restaurantNotes: menuContext.restaurant_notes,
         }),
-      setAnswers: (answers) => setState((s) => ({ ...s, answers })),
-      setBudget: (budget) => setState((s) => ({ ...s, budget })),
-      setPicks: (picks) => setState((s) => ({ ...s, picks })),
+      setOutcome: ({ questions, answers, spice, picks }) =>
+        setState((s) => ({ ...s, questions, answers, spice, picks })),
       reset: () => setState(EMPTY),
     }),
     [state]

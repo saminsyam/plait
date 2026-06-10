@@ -13,13 +13,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
+import { parsePreferences } from '@/lib/parsePreferences';
 import { useProfile } from '@/state/profile';
 
 const MIN_CHARS = 3;
 
 export default function PreferencesScreen() {
   const router = useRouter();
-  const { preferences, savePreferences } = useProfile();
+  const { preferences, savePreferences, saveHardConstraints } = useProfile();
   // `edit` is passed when arriving from the home-screen pencil; otherwise this
   // is first-launch onboarding and we continue forward to the TDEE step.
   const { edit } = useLocalSearchParams<{ edit?: string }>();
@@ -33,7 +34,12 @@ export default function PreferencesScreen() {
   const onContinue = async () => {
     if (!canContinue) return;
     setSaving(true);
-    await savePreferences(text);
+    // Smart-parse the free text into structured hard constraints (allergens +
+    // halal/kosher) that feed the deterministic safety gate. Soft preferences
+    // stay in the text and flow to the model as ranking context. Parsing never
+    // throws — on failure we save with no hard gate rather than blocking.
+    const constraints = await parsePreferences(text);
+    await Promise.all([savePreferences(text), saveHardConstraints(constraints)]);
     if (isEditing) router.back();
     else router.replace('/');
   };
@@ -50,7 +56,8 @@ export default function PreferencesScreen() {
           <View style={styles.header}>
             <Title style={styles.title}>Describe your dietary needs</Title>
             <Subtitle style={styles.sub}>
-              I&apos;ll use this to filter and rank every menu I read for you.
+              Tell me in your own words. I&apos;ll use this to filter and rank every
+              menu I read for you.
             </Subtitle>
           </View>
 
@@ -58,20 +65,26 @@ export default function PreferencesScreen() {
             style={styles.input}
             value={text}
             onChangeText={setText}
-            placeholder="e.g. Halal, no shellfish, high-protein, avoiding gluten"
+            placeholder="e.g. Halal, allergic to shellfish, high-protein, love spicy food, avoiding gluten"
             placeholderTextColor={Plait.color.textDim}
             multiline
-            numberOfLines={3}
-            maxLength={300}
+            numberOfLines={4}
+            maxLength={400}
             textAlignVertical="top"
             autoFocus={!isEditing}
             selectionColor={Plait.color.coral}
+            editable={!saving}
           />
+
+          <Text style={styles.hintInline}>
+            🔒 I automatically detect allergies and halal/kosher and never recommend a
+            dish that breaks them — just mention them above.
+          </Text>
         </ScrollView>
 
         <View style={styles.footer}>
           <PrimaryButton
-            label={isEditing ? 'Save' : 'Continue'}
+            label={saving ? 'Saving…' : isEditing ? 'Save' : 'Continue'}
             onPress={onContinue}
             disabled={!canContinue}
           />
@@ -106,8 +119,14 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 24,
     padding: Plait.space.md,
-    minHeight: 96, // ~3 lines visible
-    maxHeight: 120,
+    minHeight: 120, // ~4 lines visible
+    maxHeight: 160,
+  },
+  hintInline: {
+    color: Plait.color.textDim,
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: Plait.font.sans,
   },
   footer: {
     paddingHorizontal: Plait.space.lg,

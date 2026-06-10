@@ -43,27 +43,62 @@ async function main() {
   // Dynamic imports so loadEnv() runs first.
   const { callVision } = await import('../src/lib/callVision');
   const { callReason } = await import('../src/lib/callReason');
-  const { buildQuestions } = await import('../src/lib/questions');
+  const { applyHardGate } = await import('../src/lib/dietaryFilter');
+  const { parsePreferences } = await import('../src/lib/parsePreferences');
+  const engine = await import('../src/lib/questionEngine');
 
-  console.log('1/3  Reading menu with Claude Vision...');
+  // Canonical benchmark profile: free-text preferences are smart-parsed into
+  // hard constraints (halal → deterministic gate), while the full text also
+  // flows to the model as soft ranking context (high-protein). Edit here to
+  // exercise other scenarios (e.g. "allergic to shellfish").
+  const userPreferences = 'halal, high-protein, building muscle, loves bold flavors';
+  const hardConstraints = await parsePreferences(userPreferences);
+  console.log(`Profile → "${userPreferences}"  →  constraints=${JSON.stringify(hardConstraints)}`);
+
+  console.log('1/4  Reading menu with Claude Vision...');
   const { items, menu_context } = await callVision(base64);
   console.log(`     -> ${items.length} items: ${items.map((i) => i.name).join(', ')}`);
-  console.log(`     -> cuisine=${menu_context.cuisine_type}, dimensions=${menu_context.dimensions.map((d) => d.id).join(', ')}`);
+  console.log(`     -> cuisine=${menu_context.cuisine_type} | ${menu_context.orientation.summary}`);
 
-  console.log('2/3  Building questions (hunger + Vision dimensions)...');
-  const questions = buildQuestions(menu_context);
-  const answers: Record<string, string> = {};
-  for (const q of questions) {
-    const choice = q.options[0]; // mock answer: pick the first option
-    answers[q.id] = choice.value;
-    console.log(`     Q (${q.id}) "${q.question_text}" -> ${choice.label}`);
+  console.log('2/4  Applying deterministic hard-gate (on-device, no model)...');
+  const gate = applyHardGate(items, hardConstraints);
+  console.log(`     -> allowed=${gate.allowed.length}  verify=${gate.verify.length}  blocked=${gate.blocked.length}`);
+  for (const v of gate.verify) console.log(`     VERIFY  ${v.item.name} — ${v.reasons.join('; ')}`);
+  for (const b of gate.blocked) console.log(`     BLOCK   ${b.item.name} — ${b.reasons.join('; ')}`);
+
+  const rankable = [...gate.allowed, ...gate.verify.map((v) => v.item)];
+  const verifyById = Object.fromEntries(gate.verify.map((v) => [v.item.id, v.reasons]));
+  if (rankable.length === 0) {
+    console.log('\nNo items survived the hard-gate — nothing safe to rank.');
+    return;
   }
 
-  console.log('3/3  Reasoning for top 3 picks...');
-  const picks = await callReason({ items, questions, answers });
+  console.log('3/4  Narrowing with the deterministic engine (no model, mock answers)...');
+  // Mock the user: spice 3, then always take the top option of each question.
+  const choices = [engine.spiceChoice(3)];
+  let pool = engine.filterBySpice(rankable, 3);
+  const asked = new Set<string>();
+  let dynamic = 0;
+  while (!engine.shouldStopNarrowing(pool, dynamic)) {
+    const q = engine.nextQuestion(pool, asked);
+    if (!q) break;
+    const opt = q.options[0];
+    console.log(`     Q "${q.question_text}" -> ${opt.label} (${opt.count})`);
+    pool = engine.filterByFacet(pool, q.facetId, opt.value);
+    choices.push(engine.facetChoice(q, opt));
+    asked.add(q.facetId);
+    dynamic++;
+  }
+  const { questions, answers } = engine.choicesToQA(choices);
+  const narrowedVerify = Object.fromEntries(
+    Object.entries(verifyById).filter(([id]) => pool.some((i) => i.id === id))
+  );
+
+  console.log(`4/4  Reasoning over ${pool.length} narrowed candidates...`);
+  const picks = await callReason({ items: pool, questions, answers, userPreferences, verifyById: narrowedVerify });
   console.log('\n===== TOP PICKS =====');
   for (const p of picks) {
-    const item = items.find((i) => i.id === p.item_id);
+    const item = pool.find((i) => i.id === p.item_id);
     const flag = p.flag ? `  [${p.flag}]` : '';
     console.log(`#${p.rank}  ${item?.name ?? p.item_id}  (${p.match_score}/100)${flag}`);
     console.log(`     ${p.why}`);

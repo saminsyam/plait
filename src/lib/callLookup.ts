@@ -15,8 +15,18 @@
  * Uses the basic web_search tool (web_search_20250305) — no beta header, no
  * code-execution dependency. Web search must be enabled on the Anthropic org.
  */
-import { ANTHROPIC_API_KEY, callMessages, MissingKeyError, parseJson, VISION_MODEL } from './anthropic';
-import type { MenuItem, VisionDimension, VisionMenuContext } from './types';
+import { ANTHROPIC_API_KEY, callMessagesStream, MissingKeyError, parseJson, VISION_MODEL } from './anthropic';
+import type { OnProgress } from './progress';
+import { recordUsage } from './usage';
+import type { MenuItem, MenuOrientation, VisionMenuContext } from './types';
+
+const EMPTY_ORIENTATION: MenuOrientation = {
+  summary: '',
+  known_for: [],
+  interesting_facts: [],
+  first_timer_tips: [],
+  signature_item_ids: [],
+};
 
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
 
@@ -114,9 +124,20 @@ type MessagesResponse = {
 };
 
 /** Search the web for a restaurant menu and return structured results. */
-export async function callLookup(restaurant: string, city: string): Promise<LookupResult> {
+export async function callLookup(
+  restaurant: string,
+  city: string,
+  onProgress?: OnProgress
+): Promise<LookupResult> {
   if (!ANTHROPIC_API_KEY) throw new MissingKeyError();
 
+  onProgress?.({
+    id: 'search',
+    icon: '🔎',
+    label: 'Searching the web',
+    detail: `“${restaurant}${city ? `, ${city}` : ''}”`,
+    status: 'active',
+  });
   const userText = `Find the menu for: ${restaurant}${city ? `, ${city}` : ''}`;
   // The server runs the search loop; it can return pause_turn if it needs more
   // iterations. Re-send the accumulated turn to resume, capped to avoid loops.
@@ -162,6 +183,13 @@ export async function callLookup(restaurant: string, city: string): Promise<Look
 
     if (json.stop_reason === 'pause_turn' && json.content) {
       messages.push({ role: 'assistant', content: json.content });
+      onProgress?.({
+        id: 'search',
+        icon: '🔎',
+        label: 'Searching the web',
+        detail: `digging deeper · ${searches} ${searches === 1 ? 'search' : 'searches'} so far`,
+        status: 'active',
+      });
       continue; // resume the server-side search loop
     }
     final = json;
@@ -173,6 +201,22 @@ export async function callLookup(restaurant: string, city: string): Promise<Look
     `[Lookup] ${Date.now() - t0}ms in=${usageIn} out=${usageOut} ` +
       `web_searches=${searches} found=${result.found} items=${result.items.length}`
   );
+  recordUsage({
+    label: 'lookup.search',
+    model: VISION_MODEL,
+    inputTokens: usageIn,
+    outputTokens: usageOut,
+    webSearches: searches,
+  });
+  onProgress?.({
+    id: 'search',
+    icon: '🔎',
+    label: result.found ? 'Menu found' : 'Search finished',
+    detail: result.found
+      ? `${result.items.length} dishes · ${searches} web ${searches === 1 ? 'search' : 'searches'}`
+      : 'no menu online',
+    status: 'done',
+  });
   return result;
 }
 
@@ -262,14 +306,10 @@ function normalizeLocations(v: unknown): string[] {
 const ENRICH_SYSTEM = `You are a food analyst for a dietary app. You are given a restaurant menu as a JSON
 list of items (dish names). Infer properties from each name. Return ONLY a compact JSON object (no markdown, no preamble):
 {
-  "items": [ { "id": <same id>, "dietary_tags": ["halal"|"vegetarian"|"vegan"|"gluten-free"], "protein_type": "beef|chicken|fish|seafood|lamb|pork|vegetarian|vegan|mixed|unknown", "spice_level": 0-5 } ],
-  "menu_context": {
-    "cuisine_type": string,
-    "dimensions": [ { "id": string, "question_text": string, "options": [ { "label": string, "value": string, "emoji": string|null } ] } ],
-    "restaurant_notes": string[]
-  }
+  "items": [ { "id": <same id>, "dietary_tags": ["halal"|"vegetarian"|"vegan"|"gluten-free"], "protein_type": "beef|chicken|fish|seafood|lamb|pork|vegetarian|vegan|mixed|unknown", "spice_level": 0-5, "category": "starter|main|side|dessert|drink", "flavor": ["rich"|"savory"|"smoky"|"fresh"|"tangy"|"sweet"|"spicy"] } ],
+  "menu_context": { "cuisine_type": string, "restaurant_notes": string[] }
 }
-For dimensions: identify 2-4 menu-specific choices (e.g. protein, spice, cooking style, portion) that apply to 20-80% of items, each a natural server-style question with only the options present. Do NOT include hunger level. Only assert dietary_tags you are confident about. Keep it terse.`;
+Only assert dietary_tags / flavor tags you are confident about. Keep it terse.`;
 
 const parsePrice = (price: string | null): number => {
   if (!price) return 0;
@@ -281,24 +321,6 @@ function arr(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 }
 
-function normalizeDimension(d: Partial<VisionDimension>, index: number): VisionDimension | null {
-  const rawOptions: Array<{ label?: string; value?: string; emoji?: string | null }> = Array.isArray(
-    d.options
-  )
-    ? d.options
-    : [];
-  const options = rawOptions
-    .filter((o) => !!o)
-    .map((o) => ({
-      label: o.label ?? String(o.value ?? ''),
-      value: o.value ?? o.label ?? '',
-      emoji: o.emoji ?? null,
-    }))
-    .filter((o) => o.value !== '');
-  if (options.length < 2) return null;
-  return { id: d.id ?? `dim-${index}`, question_text: d.question_text ?? 'Pick one', options };
-}
-
 type EnrichResult = { items: MenuItem[]; menu_context: VisionMenuContext };
 
 /**
@@ -306,20 +328,44 @@ type EnrichResult = { items: MenuItem[]; menu_context: VisionMenuContext };
  * rest of the app consumes. Enrichment failure falls back to untagged items
  * with no menu questions (the funnel still works).
  */
-export async function buildScanFromLookup(lookupItems: LookupItem[]): Promise<EnrichResult> {
+export async function buildScanFromLookup(
+  lookupItems: LookupItem[],
+  onProgress?: OnProgress
+): Promise<EnrichResult> {
   const t0 = Date.now();
   const payload = lookupItems.map((it, i) => ({ id: String(i + 1), name: it.name }));
 
   let enrichment = new Map<string, Record<string, unknown>>();
-  let menuContext: VisionMenuContext = { cuisine_type: 'unknown', dimensions: [], restaurant_notes: [] };
+  let menuContext: VisionMenuContext = {
+    cuisine_type: 'unknown',
+    orientation: EMPTY_ORIENTATION,
+    restaurant_notes: [],
+  };
 
+  onProgress?.({ id: 'tag', icon: '🏷️', label: 'Tagging dietary info', status: 'active' });
   try {
-    const raw = await callMessages({
+    let lastCount = 0;
+    const { text: raw, stopReason } = await callMessagesStream({
       system: ENRICH_SYSTEM,
       model: VISION_MODEL,
+      label: 'lookup.tag',
       maxTokens: 4000,
       content: [{ type: 'text', text: JSON.stringify(payload) }],
+      onText: (text) => {
+        const count = (text.match(/"id"/g) ?? []).length;
+        if (count !== lastCount) {
+          lastCount = count;
+          onProgress?.({
+            id: 'tag',
+            icon: '🏷️',
+            label: 'Tagging dietary info',
+            detail: `${Math.min(count, lookupItems.length)} of ${lookupItems.length} dishes`,
+            status: 'active',
+          });
+        }
+      },
     });
+    if (stopReason === 'max_tokens') throw new Error('TRUNCATED');
     const parsed = parseJson<{ items?: unknown; menu_context?: unknown }>(raw);
 
     if (Array.isArray(parsed.items)) {
@@ -330,11 +376,7 @@ export async function buildScanFromLookup(lookupItems: LookupItem[]): Promise<En
     const ctx = (parsed.menu_context ?? {}) as Partial<VisionMenuContext>;
     menuContext = {
       cuisine_type: typeof ctx.cuisine_type === 'string' ? ctx.cuisine_type : 'unknown',
-      dimensions: Array.isArray(ctx.dimensions)
-        ? ctx.dimensions
-            .map((d, i) => normalizeDimension(d as Partial<VisionDimension>, i))
-            .filter((d): d is VisionDimension => d !== null)
-        : [],
+      orientation: EMPTY_ORIENTATION,
       restaurant_notes: arr((ctx as { restaurant_notes?: unknown }).restaurant_notes),
     };
   } catch {
@@ -354,17 +396,26 @@ export async function buildScanFromLookup(lookupItems: LookupItem[]): Promise<En
       price: parsePrice(it.price),
       description: it.description,
       ingredients: [],
-      flavor_profile: [],
+      flavor_profile: arr(e?.flavor),
       texture: [],
       spice_level: typeof e?.spice_level === 'number' ? (e.spice_level as number) : 0,
       dietary_tags: arr(e?.dietary_tags),
       protein_type,
+      category: typeof e?.category === 'string' ? (e.category as string) : '',
       cuisine_type: menuContext.cuisine_type,
     };
   });
 
-  console.log(
-    `[LookupEnrich] ${Date.now() - t0}ms items=${items.length} dims=${menuContext.dimensions.length}`
-  );
+  console.log(`[LookupEnrich] ${Date.now() - t0}ms items=${items.length}`);
+  onProgress?.({
+    id: 'tag',
+    icon: '🏷️',
+    label: 'Dietary info tagged',
+    detail:
+      enrichment.size > 0
+        ? `${enrichment.size} of ${lookupItems.length} dishes`
+        : 'skipped — dishes stay untagged',
+    status: 'done',
+  });
   return { items, menu_context: menuContext };
 }

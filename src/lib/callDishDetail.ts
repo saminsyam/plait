@@ -85,6 +85,7 @@ export async function callDishDetail({
   const raw = await callMessages({
     system: SYSTEM,
     model: VISION_MODEL,
+    label: 'dish.detail',
     maxTokens: 700,
     content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
   });

@@ -1,59 +1,46 @@
 /**
- * Food-themed processing screen. The hero is a tappable ingredient toy (a
- * pleasant distraction during the wait); the cooking-step progress lives in a
- * compact footer so loading is always glanceable underneath.
+ * Food-themed processing screen showing REAL pipeline status. The hero is a
+ * tappable ingredient toy (a pleasant distraction during the wait); the footer
+ * lists the actual stages the pipeline has reported — live details ("23 dishes
+ * spotted"), per-step timers, checkmarks when each stage truly finishes.
  *
- * Navigation is gated: the parent passes `done` (true once the API call
- * resolved) and `onReady` (where to go next). We only call `onReady` once the
- * final step's timer has fired AND the work is done — so the flow never skips
- * ahead and feels broken when the API happens to be fast. The toy never gates
- * anything; it's thrown away the instant we navigate.
+ * Navigation is gated only by the real work: once `done` is true we linger
+ * just long enough to show the final checkmarks (never less than a short
+ * minimum so a fast API doesn't flash the screen), then call `onReady`.
+ * The toy never gates anything; it's thrown away the instant we navigate.
  */
 import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { IngredientToy } from '@/components/ingredient-toy';
 import { Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
+import type { ProgressStep } from '@/hooks/use-progress-steps';
 
-const STEPS = [
-  { icon: '🍽️', label: 'Plating the menu…' },
-  { icon: '🔪', label: 'Chopping through the ingredients…' },
-  { icon: '🧂', label: 'Seasoning for your taste…' },
-  { icon: '✨', label: 'Serving your top picks…' },
-];
+/** Never show the screen for less than this — a fast API shouldn't flash. */
+const MIN_SHOW_MS = 1200;
+/** After the work finishes, linger so the final checkmark registers. */
+const DONE_LINGER_MS = 450;
 
-// When each step becomes the active one (ms from mount).
-const ACTIVATE_AT = [0, 1800, 3200, 4500];
-const LAST = STEPS.length - 1;
-
-const SUBTEXTS = [
-  'Sniffing out hidden allergens…',
-  'Tasting the macros…',
-  'Checking your halal radar…',
-  'Pairing with your goals…',
-  'Almost ready to serve…',
-  'Final taste test…',
-];
+const MONO = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 
 export function CookingLoader({
   done,
   onReady,
   title = 'Cooking up your picks',
+  steps,
 }: {
   done: boolean;
   onReady: () => void;
   title?: string;
+  /** Real pipeline steps (from useProgressSteps). */
+  steps: ProgressStep[];
 }) {
-  const [active, setActive] = useState(0);
-  const [lastFired, setLastFired] = useState(false);
-  const [subIndex, setSubIndex] = useState(0);
+  const mountedAt = useRef(Date.now());
   const readyCalled = useRef(false);
 
   const pulse = useRef(new Animated.Value(0)).current;
-  const subOpacity = useRef(new Animated.Value(1)).current;
-
   const [reduceMotion, setReduceMotion] = useState(false);
   useEffect(() => {
     AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
@@ -61,15 +48,11 @@ export function CookingLoader({
     return () => sub.remove();
   }, []);
 
-  // Step activation timers.
+  // Re-render a few times a second so the live per-step timers tick.
+  const [, setTick] = useState(0);
   useEffect(() => {
-    const timers = ACTIVATE_AT.map((t, i) =>
-      setTimeout(() => {
-        setActive(i);
-        if (i === LAST) setLastFired(true);
-      }, t)
-    );
-    return () => timers.forEach(clearTimeout);
+    const id = setInterval(() => setTick((t) => t + 1), 150);
+    return () => clearInterval(id);
   }, []);
 
   // Subtle pulse on the active step's icon (skipped under reduced motion).
@@ -85,26 +68,27 @@ export function CookingLoader({
     return () => loop.stop();
   }, [pulse, reduceMotion]);
 
-  // Rotate the flavour-text line every 2s with a fade.
+  // Announce stage changes to screen readers (labels only, not the live counts).
+  const activeLabel = steps.find((s) => s.status === 'active')?.label;
   useEffect(() => {
-    const id = setInterval(() => {
-      Animated.timing(subOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
-        setSubIndex((s) => (s + 1) % SUBTEXTS.length);
-        Animated.timing(subOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-      });
-    }, 2000);
-    return () => clearInterval(id);
-  }, [subOpacity]);
+    if (activeLabel) AccessibilityInfo.announceForAccessibility(activeLabel);
+  }, [activeLabel]);
 
-  // Only navigate once the last step has shown AND the work finished.
+  // Navigate once the real work is done — no scripted timeline to wait out.
   useEffect(() => {
-    if (lastFired && done && !readyCalled.current) {
+    if (!done || readyCalled.current) return;
+    const elapsed = Date.now() - mountedAt.current;
+    const wait = Math.max(MIN_SHOW_MS - elapsed, DONE_LINGER_MS);
+    const t = setTimeout(() => {
       readyCalled.current = true;
       onReady();
-    }
-  }, [lastFired, done, onReady]);
+    }, wait);
+    return () => clearTimeout(t);
+  }, [done, onReady]);
 
   const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
+  const now = Date.now();
+  const totalSec = ((now - mountedAt.current) / 1000).toFixed(1);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -113,31 +97,44 @@ export function CookingLoader({
       {/* Hero: the tappable ingredient toy fills the open middle. */}
       <IngredientToy reduceMotion={reduceMotion} />
 
-      {/* Compact progress footer. */}
+      {/* Live status footer — one row per real pipeline stage. */}
       <View style={styles.footer}>
         <View style={styles.steps}>
-          {STEPS.map((step, i) => {
-            const isActive = i === active;
-            const isDone = i < active;
-            const lit = isActive || isDone;
+          {steps.length === 0 && (
+            <View style={[styles.step, styles.stepLit]}>
+              <Animated.Text style={[styles.icon, !reduceMotion && { transform: [{ scale }] }]}>🔥</Animated.Text>
+              <Text style={[styles.label, styles.labelOn]}>Warming up…</Text>
+            </View>
+          )}
+          {steps.map((step) => {
+            const isDone = step.status === 'done';
+            const seconds = (((step.endedAt ?? now) - step.startedAt) / 1000).toFixed(1);
             return (
-              <View key={step.label} style={[styles.step, lit && styles.stepLit]}>
+              <View key={step.id} style={[styles.step, styles.stepLit]}>
                 {isDone ? (
                   <Text style={styles.icon}>✅</Text>
                 ) : (
-                  <Animated.Text style={[styles.icon, isActive && !reduceMotion && { transform: [{ scale }] }]}>
+                  <Animated.Text style={[styles.icon, !reduceMotion && { transform: [{ scale }] }]}>
                     {step.icon}
                   </Animated.Text>
                 )}
-                <Text style={[styles.label, lit ? styles.labelOn : styles.labelOff]} numberOfLines={1}>
-                  {step.label}
-                </Text>
+                <View style={styles.stepText}>
+                  <Text style={[styles.label, isDone ? styles.labelDim : styles.labelOn]} numberOfLines={1}>
+                    {step.label}
+                  </Text>
+                  {!!step.detail && (
+                    <Text style={[styles.detail, !isDone && styles.detailOn]} numberOfLines={1}>
+                      {step.detail}
+                    </Text>
+                  )}
+                </View>
+                <Text style={styles.time}>{seconds}s</Text>
               </View>
             );
           })}
         </View>
 
-        <Animated.Text style={[styles.sub, { opacity: subOpacity }]}>{SUBTEXTS[subIndex]}</Animated.Text>
+        <Text style={styles.sub}>⏱ {totalSec}s · live from the kitchen</Text>
       </View>
     </SafeAreaView>
   );
@@ -167,9 +164,19 @@ const styles = StyleSheet.create({
   },
   stepLit: { borderLeftColor: Plait.color.coral },
   icon: { fontSize: 17, width: 24, textAlign: 'center' },
-  label: { fontSize: 14, fontFamily: Plait.font.sans, fontWeight: '600', flexShrink: 1 },
+  stepText: { flex: 1, gap: 1 },
+  label: { fontSize: 14, fontFamily: Plait.font.sans, fontWeight: '600' },
   labelOn: { color: Plait.color.text },
-  labelOff: { color: Plait.color.textDim },
+  labelDim: { color: Plait.color.textDim },
+  detail: { fontSize: 12, fontFamily: Plait.font.sans, color: Plait.color.textDim },
+  detailOn: { color: Plait.color.teal },
+  time: {
+    fontSize: 12,
+    fontFamily: MONO,
+    color: Plait.color.textDim,
+    minWidth: 44,
+    textAlign: 'right',
+  },
   sub: {
     color: Plait.color.textDim,
     fontSize: 13,

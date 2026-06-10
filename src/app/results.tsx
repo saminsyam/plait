@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Body, Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { callDishDetail, type DishDetail } from '@/lib/callDishDetail';
+import { formatUsd, getUsage } from '@/lib/usage';
 import type { MenuItem, Pick } from '@/lib/types';
 import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
@@ -49,19 +50,23 @@ function flagLabel(flag: Pick['flag']): string | null {
   }
 }
 
-/** A single horizontal macro bar. */
+/**
+ * A single horizontal macro bar. Width is relative to the largest value among
+ * the picks — grams only, no daily-target math (TDEE UI is deferred; its
+ * plumbing in profile/callDishDetail stays for later).
+ */
 function MacroBar({
   emoji,
   value,
-  target,
+  max,
   color,
 }: {
   emoji: string;
   value: number;
-  target: number | null; // null = relative mode (no TDEE)
+  max: number;
   color: string;
 }) {
-  const pct = target != null ? Math.min(1, value / target) : 1;
+  const pct = Math.min(1, value / max);
   return (
     <View style={mb.row}>
       <Text style={mb.emoji}>{emoji}</Text>
@@ -71,7 +76,6 @@ function MacroBar({
         </View>
       </View>
       <Text style={mb.value}>{value}g</Text>
-      {target != null && <Text style={mb.pct}>{Math.round(pct * 100)}%</Text>}
     </View>
   );
 }
@@ -83,7 +87,6 @@ const mb = StyleSheet.create({
   track: { height: 6, backgroundColor: Plait.color.background, borderRadius: 3, overflow: 'hidden' },
   fill: { height: 6, borderRadius: 3 },
   value: { color: Plait.color.textDim, fontSize: 12, fontFamily: Plait.font.sans, width: 34, textAlign: 'right' },
-  pct: { color: Plait.color.textDim, fontSize: 11, fontFamily: Plait.font.sans, width: 30, textAlign: 'right' },
 });
 
 /** Animated chevron that rotates 180° between collapsed/expanded. */
@@ -125,7 +128,7 @@ export default function ResultsScreen() {
   const router = useRouter();
   const session = useSession();
   const { preferences, tdee } = useProfile();
-  const { picks, items, questions, answers, restaurantNotes } = session;
+  const { picks, items, questions, answers, restaurantNotes, blocked } = session;
 
   // Expand/detail state — only one card open at a time.
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -142,11 +145,14 @@ export default function ResultsScreen() {
     return () => sub.remove();
   }, []);
 
+  // A scan with zero safe picks but a non-empty avoid list is still a valid
+  // result to show — don't bounce home in that case.
+  const isEmpty = picks.length === 0 && blocked.length === 0;
   useEffect(() => {
-    if (picks.length === 0) router.replace('/');
-  }, [picks.length, router]);
+    if (isEmpty) router.replace('/');
+  }, [isEmpty, router]);
 
-  if (picks.length === 0) return <Loading message="Loading…" />;
+  if (isEmpty) return <Loading message="Loading…" />;
 
   const byId = new Map(items.map((i) => [i.id, i]));
 
@@ -230,20 +236,6 @@ export default function ResultsScreen() {
         <Subtitle numberOfLines={2}>Ranked for {preferences ?? 'your preferences'}.</Subtitle>
       </View>
 
-      {/* TDEE reference panel */}
-      {tdee ? (
-        <View style={styles.tdeePanel}>
-          <Text style={styles.tdeeLine}>
-            🔥 {tdee.calories.toLocaleString()} kcal/day
-            {'  '}Protein {tdee.protein_g}g · Carbs {tdee.carbs_g}g · Fat {tdee.fat_g}g
-          </Text>
-        </View>
-      ) : (
-        <Pressable style={styles.tdeePanel} onPress={() => router.push('/tdee?edit=1')}>
-          <Text style={styles.tdeeAdd}>Add your goals →</Text>
-        </Pressable>
-      )}
-
       {/* Restaurant-level trust signal (halal/kosher certification) */}
       {trustNotes.length > 0 && (
         <View style={styles.trustBanner}>
@@ -254,6 +246,13 @@ export default function ResultsScreen() {
       )}
 
       <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
+        {picks.length === 0 && (
+          <Body style={styles.emptyPicks}>
+            Nothing on this menu cleared your hard restrictions. The dishes below
+            were ruled out for safety — ask staff if you want to double-check any.
+          </Body>
+        )}
+
         {picks.map((pick, i) => {
           const item = byId.get(pick.item_id);
           if (!item) return null;
@@ -263,7 +262,6 @@ export default function ResultsScreen() {
               key={pick.item_id}
               pick={pick}
               item={item}
-              tdee={tdee}
               halalCertified={halalCertified}
               maxProtein={maxProtein}
               maxCarbs={maxCarbs}
@@ -278,16 +276,46 @@ export default function ResultsScreen() {
             />
           );
         })}
+
+        {/* Avoid list — the hard-gate's blocked items, with reasons. Kept
+            visually secondary to the top picks above. */}
+        {blocked.length > 0 && (
+          <View style={styles.avoidSection}>
+            <Text style={styles.avoidHeader}>Avoid on this menu</Text>
+            {blocked.map((b, i) => (
+              <View key={b.item.id || `blocked-${i}`} style={styles.avoidRow}>
+                <Text style={styles.avoidName} numberOfLines={1}>
+                  {b.item.name}
+                </Text>
+                <Text style={styles.avoidReason}>{b.reasons.join(' · ')}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
         <PrimaryButton label="Scan another menu" variant="ghost" onPress={scanAnother} />
+        <UsageLine />
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/** Dim one-liner with the app-session API spend (from the usage ledger). */
+function UsageLine() {
+  const { totals } = getUsage();
+  if (totals.calls === 0) return null;
+  const tokens = totals.inputTokens + totals.outputTokens;
+  return (
+    <Text style={styles.usageLine}>
+      ⚡ {totals.calls} API calls · {(tokens / 1000).toFixed(1)}k tokens · {formatUsd(totals.costUsd)}{' '}
+      this session
+    </Text>
   );
 }
 
 function Card({
   pick,
   item,
-  tdee,
   halalCertified,
   maxProtein,
   maxCarbs,
@@ -302,7 +330,6 @@ function Card({
 }: {
   pick: Pick;
   item: MenuItem;
-  tdee: { calories: number; protein_g: number; carbs_g: number; fat_g: number } | null;
   halalCertified: boolean;
   maxProtein: number;
   maxCarbs: number;
@@ -347,19 +374,15 @@ function Card({
       {hasMacros && (
         <View style={styles.macroBlock}>
           {pick.protein_g != null && (
-            <MacroBar emoji="🟠" value={pick.protein_g} target={tdee ? tdee.protein_g : maxProtein} color="#E8704A" />
+            <MacroBar emoji="🟠" value={pick.protein_g} max={maxProtein} color="#E8704A" />
           )}
           {pick.carbs_g != null && (
-            <MacroBar emoji="🟡" value={pick.carbs_g} target={tdee ? tdee.carbs_g : maxCarbs} color="#E8B44A" />
+            <MacroBar emoji="🟡" value={pick.carbs_g} max={maxCarbs} color="#E8B44A" />
           )}
           {pick.fat_g != null && (
-            <MacroBar emoji="⚪" value={pick.fat_g} target={tdee ? tdee.fat_g : maxFat} color="#9A958C" />
+            <MacroBar emoji="⚪" value={pick.fat_g} max={maxFat} color="#9A958C" />
           )}
-          <Text style={styles.confidence}>
-            {tdee
-              ? `Est. macros ${confidenceLabel} accuracy`
-              : `Set goals to see % of daily targets · Est. ${confidenceLabel}`}
-          </Text>
+          <Text style={styles.confidence}>Est. macros {confidenceLabel} accuracy</Text>
         </View>
       )}
 
@@ -445,17 +468,6 @@ function Card({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Plait.color.background, paddingHorizontal: Plait.space.lg },
   head: { paddingTop: Plait.space.sm, paddingBottom: Plait.space.xs, gap: 4 },
-  tdeePanel: {
-    paddingVertical: 10,
-    paddingHorizontal: Plait.space.sm,
-    marginBottom: Plait.space.sm,
-    backgroundColor: Plait.color.card,
-    borderRadius: Plait.radius.sm,
-    borderWidth: 1,
-    borderColor: Plait.color.border,
-  },
-  tdeeLine: { color: Plait.color.textDim, fontSize: 12, fontFamily: Plait.font.sans, lineHeight: 18 },
-  tdeeAdd: { color: Plait.color.teal, fontSize: 13, fontWeight: '600', fontFamily: Plait.font.sans },
   trustBanner: {
     backgroundColor: 'rgba(78,205,196,0.12)',
     borderColor: Plait.color.teal,
@@ -535,4 +547,47 @@ const styles = StyleSheet.create({
   cardFooter: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   tapHint: { color: Plait.color.textDim, fontSize: 12, fontFamily: Plait.font.sans },
   chevron: { color: Plait.color.textDim, fontSize: 16 },
+
+  // Empty + avoid list (secondary to the picks)
+  emptyPicks: { color: Plait.color.textDim, fontSize: 14, lineHeight: 20 },
+  avoidSection: {
+    backgroundColor: Plait.color.card,
+    borderRadius: Plait.radius.md,
+    borderWidth: 1,
+    borderColor: Plait.color.border,
+    padding: Plait.space.md,
+    gap: Plait.space.sm,
+  },
+  avoidHeader: {
+    color: Plait.color.textDim,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    fontFamily: Plait.font.sans,
+  },
+  avoidRow: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Plait.color.border,
+    paddingTop: Plait.space.sm,
+    gap: 2,
+  },
+  avoidName: {
+    color: Plait.color.text,
+    fontSize: 15,
+    fontWeight: '600',
+    fontFamily: Plait.font.sans,
+  },
+  avoidReason: {
+    color: Plait.color.textDim,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: Plait.font.sans,
+  },
+  usageLine: {
+    color: Plait.color.textDim,
+    fontSize: 12,
+    fontFamily: Plait.font.sans,
+    textAlign: 'center',
+  },
 });

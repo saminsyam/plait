@@ -18,8 +18,10 @@ import {
   ACTIVITY_LEVELS,
   computeTdee,
   ftInToCm,
+  GOALS,
   lbsToKg,
   type ActivityLevel,
+  type Goal,
   type Sex,
 } from '@/lib/tdee';
 import { useProfile, type TdeeGoals } from '@/state/profile';
@@ -83,6 +85,7 @@ export default function TdeeScreen() {
   const [heightIn, setHeightIn] = useState('');
   const [sex, setSex] = useState<Sex | null>(null);
   const [activity, setActivity] = useState<ActivityLevel | null>(null);
+  const [goal, setGoal] = useState<Goal | null>(null);
   const [result, setResult] = useState<TdeeGoals | null>(null);
 
   const num = (s: string) => {
@@ -107,13 +110,14 @@ export default function TdeeScreen() {
   const ageOk = num(age) > 0 && num(age) < 120;
   const weightOk = weightKgValue() > 0;
   const heightOk = heightCmValue() > 0;
-  const canCalculate = ageOk && weightOk && heightOk && sex !== null && activity !== null;
+  const canCalculate =
+    ageOk && weightOk && heightOk && sex !== null && activity !== null && goal !== null;
 
   // Editing any input invalidates a stale result so the user re-calculates.
   const invalidate = () => result !== null && setResult(null);
 
   const onCalculate = () => {
-    if (!canCalculate || sex === null || activity === null) return;
+    if (!canCalculate || sex === null || activity === null || goal === null) return;
     setResult(
       computeTdee({
         age: num(age),
@@ -121,6 +125,7 @@ export default function TdeeScreen() {
         heightCm: heightCmValue(),
         sex,
         activity,
+        goal,
       })
     );
   };
@@ -273,6 +278,20 @@ export default function TdeeScreen() {
                   label={a.label}
                   selected={activity === a.value}
                   onPress={() => { setActivity(a.value); invalidate(); }}
+                />
+              ))}
+            </View>
+          </Field>
+
+          <Field label="Goal">
+            <View style={styles.row}>
+              {GOALS.map((g) => (
+                <Chip
+                  key={g.value}
+                  label={g.label}
+                  selected={goal === g.value}
+                  onPress={() => { setGoal(g.value); invalidate(); }}
+                  style={styles.flexChip}
                 />
               ))}
             </View>

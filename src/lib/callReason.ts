@@ -2,7 +2,8 @@
  * Call 2 — Reasoning. Given the menu, the user's answers, dietary preferences,
  * and optional TDEE targets, return exactly 3 ranked picks with macro estimates.
  */
-import { callMessages, parseJson } from './anthropic';
+import { callMessagesStream, parseJson } from './anthropic';
+import type { OnProgress } from './progress';
 import type { Answers, MenuItem, Pick, Question } from './types';
 
 const SYSTEM = `You are a friendly menu recommendation engine, like a great waiter.
@@ -25,35 +26,54 @@ For each pick return JSON matching this shape exactly:
 Confidence guide: high = nutrition info stated on menu, medium = can infer from
 ingredients, low = rough estimate from dish type only.
 
+Some items may be marked "needs_verification": true with a "verify_reasons" list.
+These passed an on-device safety pre-filter only as UNCERTAIN (not confirmed safe) —
+e.g. a meat dish whose halal slaughter could not be verified, or a dish whose
+allergen status is unclear. Items that definitively violate a hard restriction
+were already removed before you saw them, so you never need to filter for safety
+yourself — but treat needs_verification items with appropriate caution.
+
 Rules:
-- NEVER recommend anything that violates a hard restriction (halal, no shellfish, etc.)
-- Halal confidence below 4/5 → flag = "verify_halal"
-- Allergen present → flag = "contains_allergen", never silently filter
+- A "needs_verification" item may appear in the top 3 ONLY if it is genuinely a
+  strong fit. When you include one, you MUST append an explicit
+  "Verify with staff: <the specific reason>" clause to its "why".
+- Prefer a confidently-safe (not needs_verification) item over a needs_verification
+  one when their quality is otherwise comparable.
+- For a needs_verification item whose reason concerns halal/kosher, set
+  flag = "verify_halal".
 - "why" must name specific ingredients, not generic phrases
 - If fewer than 3 items match cleanly, return 1 or 2 — don't force bad picks
 - If TDEE/macro targets are provided, prioritise dishes that fit the targets best
-- If a per-person budget is provided, prefer dishes at or under it. You may include
-  ONE slightly-over pick if it's clearly the best fit, but say so in "why"
 - If a restaurant note states the kitchen is halal- or kosher-certified, you do NOT
   need to set flag = "verify_halal" for its dishes — the certification covers it
 
 Output ONLY a JSON array of picks. No preamble, no markdown fences.`;
 
 type ReasonInput = {
+  /**
+   * The rankable items — the survivors of the deterministic hard-gate
+   * (`allowed` + `verify`). `blocked` items are NEVER passed here.
+   */
   items: MenuItem[];
   questions: Question[];
   answers: Answers;
+  /** The user's free-text dietary preferences (smart-parsed tags feed the gate). */
   userPreferences: string;
+  /**
+   * item_id → reasons for the `verify` items. Items present here are marked
+   * `needs_verification` in the payload so the model can attach a verify note.
+   */
+  verifyById?: Record<string, string[]>;
   tdeeContext?: {
     calories: number;
     protein_g: number;
     carbs_g: number;
     fat_g: number;
   } | null;
-  /** Per-person budget the user set (null/undefined = no budget). */
-  budget?: number | null;
   /** Whole-menu footer/header notes (halal certs, allergen policies, etc.). */
   restaurantNotes?: string[];
+  /** Live status reporting for the loading screen. */
+  onProgress?: OnProgress;
 };
 
 function describeAnswers(questions: Question[], answers: Answers): Record<string, string> {
@@ -72,13 +92,23 @@ export async function callReason({
   questions,
   answers,
   userPreferences,
+  verifyById,
   tdeeContext,
-  budget,
   restaurantNotes,
+  onProgress,
 }: ReasonInput): Promise<Pick[]> {
+  // Annotate the verify survivors so the model knows which picks require a
+  // "verify with staff" note. Allowed items are passed through untouched.
+  const menuItems = items.map((item) => {
+    const reasons = verifyById?.[item.id];
+    return reasons && reasons.length > 0
+      ? { ...item, needs_verification: true, verify_reasons: reasons }
+      : item;
+  });
+
   const userPayload = {
     answers: describeAnswers(questions, answers),
-    menu_items: items,
+    menu_items: menuItems,
   };
 
   let contextBlock = `User dietary preferences: "${userPreferences}"\n`;
@@ -87,17 +117,23 @@ export async function callReason({
       `User daily targets: ${tdeeContext.calories} kcal, ` +
       `Protein ${tdeeContext.protein_g}g, Carbs ${tdeeContext.carbs_g}g, Fat ${tdeeContext.fat_g}g\n`;
   }
-  if (budget && budget > 0) {
-    contextBlock += `User budget: $${budget} per person — prefer dishes at or under this.\n`;
-  }
   if (restaurantNotes && restaurantNotes.length > 0) {
     contextBlock += `Restaurant notes (apply to whole menu): ${restaurantNotes
       .map((n) => `"${n}"`)
       .join('; ')}\n`;
   }
 
-  const raw = await callMessages({
+  onProgress?.({
+    id: 'rank',
+    icon: '👨‍🍳',
+    label: 'Weighing your matches',
+    detail: `${items.length} ${items.length === 1 ? 'dish' : 'dishes'} in the running`,
+    status: 'active',
+  });
+  let lastPick = 0;
+  const { text: raw, stopReason } = await callMessagesStream({
     system: SYSTEM,
+    label: 'reason.rank',
     maxTokens: 2000,
     content: [
       {
@@ -109,12 +145,35 @@ export async function callReason({
           JSON.stringify(userPayload, null, 2),
       },
     ],
+    // Each pick carries one "item_id" key — counting them as they stream in
+    // tells the user which pick is being written right now.
+    onText: (text) => {
+      const count = (text.match(/"item_id"/g) ?? []).length;
+      if (count !== lastPick && count >= 1 && count <= 3) {
+        lastPick = count;
+        onProgress?.({
+          id: 'rank',
+          icon: '👨‍🍳',
+          label: 'Weighing your matches',
+          detail: `writing pick #${count}…`,
+          status: 'active',
+        });
+      }
+    },
   });
+  if (stopReason === 'max_tokens') throw new Error('TRUNCATED');
 
   const picks = parseJson<Pick[]>(raw);
   if (!Array.isArray(picks) || picks.length === 0) {
     throw new Error('No suitable picks were returned for this menu.');
   }
+  onProgress?.({
+    id: 'rank',
+    icon: '👨‍🍳',
+    label: 'Picks ranked',
+    detail: `top ${Math.min(picks.length, 3)} ready`,
+    status: 'done',
+  });
 
   const validIds = new Set(items.map((i) => i.id));
   return picks

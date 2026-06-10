@@ -15,8 +15,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CookingLoader } from '@/components/cooking-loader';
 import { Body, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
+import { useProgressSteps } from '@/hooks/use-progress-steps';
 import { buildScanFromLookup, callLookup, type LookupResult } from '@/lib/callLookup';
-import { buildQuestions } from '@/lib/questions';
+import { applyHardGate } from '@/lib/dietaryFilter';
+import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
 
 type Phase = 'input' | 'searching' | 'result' | 'building';
@@ -24,6 +26,7 @@ type Phase = 'input' | 'searching' | 'result' | 'building';
 export default function LookupScreen() {
   const router = useRouter();
   const session = useSession();
+  const { hardConstraints } = useProfile();
 
   const [restaurant, setRestaurant] = useState('');
   const [city, setCity] = useState('');
@@ -31,14 +34,15 @@ export default function LookupScreen() {
   const [result, setResult] = useState<LookupResult | null>(null);
   const [selectedMeal, setSelectedMeal] = useState<string | null>(null);
   const [buildDone, setBuildDone] = useState(false);
-  const [nextRoute, setNextRoute] = useState<'/questions' | '/budget'>('/questions');
   const [error, setError] = useState<string | null>(null);
+  const { steps, onProgress, resetProgress } = useProgressSteps();
 
   const runSearch = async (name: string, where: string) => {
     setPhase('searching');
     setError(null);
+    resetProgress();
     try {
-      const r = await callLookup(name.trim(), where.trim());
+      const r = await callLookup(name.trim(), where.trim(), onProgress);
       setResult(r);
       setSelectedMeal(null);
       setPhase('result');
@@ -53,6 +57,7 @@ export default function LookupScreen() {
     setPhase('building');
     setBuildDone(false);
     setError(null);
+    resetProgress();
     (async () => {
       try {
         const multiPeriod = result.meal_periods_found.length > 1;
@@ -62,18 +67,29 @@ export default function LookupScreen() {
             : result.items;
         const useItems = filtered.length > 0 ? filtered : result.items;
 
-        const scan = await buildScanFromLookup(useItems);
+        const scan = await buildScanFromLookup(useItems, onProgress);
         if (scan.items.length === 0) throw new Error('Could not read this menu. Try a photo instead.');
 
-        const questions = buildQuestions(scan.menu_context);
-        const hasPrices = scan.items.some((i) => i.price > 0);
-        setNextRoute(hasPrices ? '/budget' : '/questions');
+        onProgress({ id: 'gate', icon: '🛡️', label: 'Applying your dietary guardrails', status: 'active' });
+        const gate = applyHardGate(scan.items, hardConstraints);
+        const candidates = [...gate.allowed, ...gate.verify.map((v) => v.item)];
+        const verifyById = Object.fromEntries(gate.verify.map((v) => [v.item.id, v.reasons]));
+        onProgress({
+          id: 'gate',
+          icon: '🛡️',
+          label: 'Dietary guardrails applied',
+          detail:
+            `${candidates.length} dishes in play` +
+            (gate.blocked.length > 0 ? ` · ${gate.blocked.length} set aside` : ''),
+          status: 'done',
+        });
         session.setScan({
           imageUri: '',
           items: scan.items,
-          questions,
-          hasPrices,
-          restaurantNotes: scan.menu_context.restaurant_notes,
+          menuContext: scan.menu_context,
+          candidates,
+          verifyById,
+          blocked: gate.blocked,
         });
         setBuildDone(true);
       } catch (e) {
@@ -85,13 +101,18 @@ export default function LookupScreen() {
 
   // --- Loaders (the toy is playable while we wait)
   if (phase === 'searching') {
-    // done stays false — the cooking steps animate and the ingredient toy is
-    // tappable; we leave this screen by switching phase when the search returns.
-    return <CookingLoader done={false} onReady={() => {}} title="Searching the web" />;
+    // done stays false — search status streams in live; we leave this screen
+    // by switching phase when the search returns.
+    return <CookingLoader done={false} steps={steps} onReady={() => {}} title="Searching the web" />;
   }
   if (phase === 'building') {
     return (
-      <CookingLoader done={buildDone} onReady={() => router.replace(nextRoute)} title="Reading the menu" />
+      <CookingLoader
+        done={buildDone}
+        steps={steps}
+        onReady={() => router.replace('/orientation')}
+        title="Reading the menu"
+      />
     );
   }
 

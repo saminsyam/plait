@@ -9,9 +9,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CookingLoader } from '@/components/cooking-loader';
 import { Body, Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
+import { useProgressSteps } from '@/hooks/use-progress-steps';
 import { callVision } from '@/lib/callVision';
+import { applyHardGate } from '@/lib/dietaryFilter';
 import { prepareMenuImage } from '@/lib/image';
-import { buildQuestions } from '@/lib/questions';
+import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
 
 type Shot = { uri: string };
@@ -32,13 +34,14 @@ function messageForError(e: unknown): string {
 export default function CameraScreen() {
   const router = useRouter();
   const session = useSession();
+  const { hardConstraints } = useProfile();
   const cameraRef = useRef<CameraView>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [shot, setShot] = useState<Shot | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
-  const [nextRoute, setNextRoute] = useState<'/questions' | '/budget'>('/questions');
   const [error, setError] = useState<string | null>(null);
+  const { steps, onProgress, resetProgress } = useProgressSteps();
 
   // Pick an existing photo from the library — works even if camera is denied.
   const pickFromLibrary = async () => {
@@ -54,9 +57,16 @@ export default function CameraScreen() {
     }
   };
 
-  // --- Cooking-steps loader while Vision reads the menu
+  // --- Live-status loader while Vision reads the menu
   if (busy) {
-    return <CookingLoader done={done} onReady={() => router.replace(nextRoute)} title="Reading your menu" />;
+    return (
+      <CookingLoader
+        done={done}
+        steps={steps}
+        onReady={() => router.replace('/orientation')}
+        title="Reading your menu"
+      />
+    );
   }
 
   // --- Permission gate (still offer upload from library)
@@ -91,23 +101,44 @@ export default function CameraScreen() {
     setBusy(true);
     setDone(false);
     setError(null);
-    // Run the work alongside the loader; the loader gates navigation so we
-    // never jump to the next screen before its steps have played out.
+    resetProgress();
+    // Run the work alongside the loader, which shows each real stage as it
+    // happens and navigates as soon as the work is actually finished.
     (async () => {
       try {
+        onProgress({ id: 'prep', icon: '📐', label: 'Prepping the photo', status: 'active' });
         const prepared = await prepareMenuImage(shot.uri);
-        const { items, menu_context } = await callVision(prepared.base64);
-        const questions = buildQuestions(menu_context);
-        const hasPrices = items.some((i) => i.price > 0);
+        onProgress({
+          id: 'prep',
+          icon: '📐',
+          label: 'Photo prepped',
+          detail: 'resized for a fast read',
+          status: 'done',
+        });
+        const { items, menu_context } = await callVision(prepared.base64, 'image/jpeg', onProgress);
+        // Run the deterministic safety gate ONCE: blocked dishes never enter the
+        // candidate pool the narrowing engine works on.
+        onProgress({ id: 'gate', icon: '🛡️', label: 'Applying your dietary guardrails', status: 'active' });
+        const gate = applyHardGate(items, hardConstraints);
+        const candidates = [...gate.allowed, ...gate.verify.map((v) => v.item)];
+        const verifyById = Object.fromEntries(gate.verify.map((v) => [v.item.id, v.reasons]));
+        onProgress({
+          id: 'gate',
+          icon: '🛡️',
+          label: 'Dietary guardrails applied',
+          detail:
+            `${candidates.length} dishes in play` +
+            (gate.blocked.length > 0 ? ` · ${gate.blocked.length} set aside` : ''),
+          status: 'done',
+        });
         session.setScan({
           imageUri: prepared.uri,
           items,
-          questions,
-          hasPrices,
-          restaurantNotes: menu_context.restaurant_notes,
+          menuContext: menu_context,
+          candidates,
+          verifyById,
+          blocked: gate.blocked,
         });
-        // If the menu showed prices, collect a budget before ranking.
-        setNextRoute(hasPrices ? '/budget' : '/questions');
         setDone(true);
       } catch (e) {
         setBusy(false);

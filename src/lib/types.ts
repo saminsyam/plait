@@ -6,11 +6,13 @@ export type MenuItem = {
   price: number;
   description: string;
   ingredients: string[];
-  flavor_profile: string[]; // umami, sweet, tangy, smoky, savory, rich
+  flavor_profile: string[]; // rich, fresh, savory, smoky, sweet, tangy, spicy
   texture: string[]; // crispy, soft, creamy, fresh, chewy
   spice_level: number; // 0–5
   dietary_tags: string[]; // halal, vegan, vegetarian, gluten-free
-  protein_type: string[]; // beef, chicken, seafood, pork, lamb, vegetarian
+  protein_type: string[]; // beef, chicken, seafood, fish, pork, lamb, vegetarian
+  /** Coarse menu section, used by the narrowing engine. */
+  category: string; // starter, main, side, dessert, drink
   cuisine_type: string;
 };
 
@@ -21,8 +23,8 @@ export type QuestionOption = {
 };
 
 /**
- * A question shown to the user. Questions are written by the Vision call
- * (menu_context.dimensions), with one fixed hunger question prepended.
+ * A narrowing question + the user's answer, recorded by the question engine and
+ * passed to the reasoning / dish-detail calls as context.
  */
 export type Question = {
   id: string;
@@ -33,13 +35,29 @@ export type Question = {
 /** Map of questionId -> chosen option value. */
 export type Answers = Record<string, string>;
 
-/** A model-written menu dimension is exactly a Question. */
-export type VisionDimension = Question;
+/**
+ * Stage 1 "orientation" — a concise read of the restaurant a great server would
+ * give before you look at anything. Written by the Vision call so it costs no
+ * extra round-trip.
+ */
+export type MenuOrientation = {
+  /** 1–2 sentence plain summary of what this place is. */
+  summary: string;
+  /** What the restaurant is known for / its strengths. */
+  known_for: string[];
+  /** A couple of interesting facts about the cuisine or menu. */
+  interesting_facts: string[];
+  /** What first-time visitors to this cuisine commonly enjoy. */
+  first_timer_tips: string[];
+  /** item ids of signature / can't-go-wrong dishes. */
+  signature_item_ids: string[];
+};
 
 /** Menu context produced by the Vision call (Call 1). */
 export type VisionMenuContext = {
   cuisine_type: string;
-  dimensions: VisionDimension[];
+  /** Orientation summary for Stage 1 (the narrowing questions are engine-built). */
+  orientation: MenuOrientation;
   /** Whole-menu footer/header notes: halal/kosher certs, allergen policies, etc. */
   restaurant_notes: string[];
 };
