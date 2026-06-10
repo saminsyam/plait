@@ -31,14 +31,15 @@ export type CrowdFavoriteEntry = {
  *   loaded  — review dishes are in hand (from cache or a fresh fetch).
  *   offer   — scan mode, nothing cached: a tap-to-fetch row with the cost.
  *   loading — fetch in flight; statusLine is the REAL latest pipeline status.
- *   empty   — the search ran dry; say so honestly instead of hiding it.
+ *   empty   — the search ran dry (or failed; message says which) — honest,
+ *             never papered over with invented reviews.
  *   hidden  — tile not applicable (no fetch wired up).
  */
 export type CrowdFavoritesState =
   | { kind: 'loaded'; favorites: CrowdFavoriteEntry[] }
   | { kind: 'offer'; onFetch: () => void }
   | { kind: 'loading'; statusLine: string | null }
-  | { kind: 'empty' }
+  | { kind: 'empty'; message?: string }
   | { kind: 'hidden' };
 
 export function RestaurantSummary({
@@ -117,7 +118,7 @@ function CrowdFavoritesBody({ state }: { state: CrowdFavoritesState }) {
     case 'empty':
       return (
         <Text style={styles.statusLine}>
-          Couldn&apos;t find reviews for this place online — nothing to show.
+          {state.message ?? 'Couldn’t find reviews for this place online — nothing to show.'}
         </Text>
       );
     default:

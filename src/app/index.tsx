@@ -31,7 +31,8 @@ export default function HomeScreen() {
           pl<Text style={{ color: Plait.color.coral }}>AI</Text>t
         </Title>
         <Subtitle style={styles.tagline}>
-          Snap a menu. I&apos;ll be your waiter and walk you to the right dish.
+          At the table? Snap the menu. Still deciding? Look the place up. Either
+          way I&apos;ll walk you to the right dish.
         </Subtitle>
 
         <Pressable
@@ -57,9 +58,13 @@ export default function HomeScreen() {
 
       <View style={styles.footer}>
         <PrimaryButton label="📷  Scan a menu" onPress={() => router.push('/camera')} />
-        {/* Restaurant lookup (/lookup) is hidden for now — its web-search call
-            costs several times a photo scan (~$0.11/lookup). The flow stays
-            fully wired; restore the button here to re-enable. */}
+        {/* "Before you go" — review lookup only (one web search, ~$0.02), far
+            cheaper than the retired menu-extraction lookup (~$0.11). */}
+        <PrimaryButton
+          label="🔎  Look up a restaurant"
+          variant="teal"
+          onPress={() => router.push('/lookup')}
+        />
       </View>
     </SafeAreaView>
   );

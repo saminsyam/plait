@@ -6,7 +6,7 @@
  * a glanceable summary instead of a wall of text.
  */
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   LayoutAnimation,
   Platform,
@@ -19,9 +19,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { RestaurantSummary } from '@/components/restaurant-summary';
+import {
+  RestaurantSummary,
+  type CrowdFavoriteEntry,
+  type CrowdFavoritesState,
+} from '@/components/restaurant-summary';
 import { Loading, NavLink, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
+import { useProgressSteps } from '@/hooks/use-progress-steps';
+import { callReviews, getCachedReviews, type ReviewsResult } from '@/lib/callReviews';
+import { matchCrowdFavorites } from '@/lib/matchReviews';
 import { useSession } from '@/state/session';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -38,11 +45,81 @@ type TileDef = {
   bullet?: string;
 };
 
+/** Where the crowd-favorites tile is in its lifecycle on this screen. */
+type ReviewPhase =
+  | { status: 'hidden' } // no restaurant name read → nothing to search for
+  | { status: 'offer' } // nothing cached → tap-to-fetch
+  | { status: 'loading' }
+  | { status: 'loaded'; entries: CrowdFavoriteEntry[] }
+  | { status: 'empty' } // search ran dry
+  | { status: 'error' };
+
 export default function OrientationScreen() {
   const router = useRouter();
   const session = useSession();
-  const { menuContext, items, candidates } = session;
+  const { menuContext, items, candidates, setCrowdFavorites } = session;
   const [open, setOpen] = useState<Set<string>>(new Set());
+
+  const restaurantName = menuContext?.restaurant_name.trim() ?? '';
+  const [reviewPhase, setReviewPhase] = useState<ReviewPhase>({ status: 'hidden' });
+  const { steps, onProgress, resetProgress } = useProgressSteps();
+
+  // Fold a fetched/cached review result into the tile + the session map the
+  // ranking call reads. Matching is pure string work — zero tokens.
+  const applyReviews = useCallback(
+    (r: ReviewsResult) => {
+      if (!r.found) {
+        setReviewPhase({ status: 'empty' });
+        return;
+      }
+      const matches = matchCrowdFavorites(r.crowd_favorites, items);
+      setCrowdFavorites(
+        Object.fromEntries(
+          matches.filter((m) => m.itemId !== null).map((m) => [m.itemId as string, m.favorite.name])
+        )
+      );
+      setReviewPhase({
+        status: 'loaded',
+        entries: matches.map((m) => ({
+          name: m.favorite.name,
+          blurb: m.favorite.blurb,
+          onMenu: m.itemId !== null,
+        })),
+      });
+    },
+    [items, setCrowdFavorites]
+  );
+
+  // Cached reviews are free — light the tile up without spending anything.
+  // No cache → offer the fetch; the baseline scan stays exactly as cheap.
+  useEffect(() => {
+    if (!restaurantName) {
+      setReviewPhase({ status: 'hidden' });
+      return;
+    }
+    let active = true;
+    (async () => {
+      const cached = await getCachedReviews(restaurantName);
+      if (!active) return;
+      if (cached) applyReviews(cached);
+      else setReviewPhase({ status: 'offer' });
+    })();
+    return () => {
+      active = false;
+    };
+  }, [restaurantName, applyReviews]);
+
+  const fetchReviews = () => {
+    setReviewPhase({ status: 'loading' });
+    resetProgress();
+    (async () => {
+      try {
+        applyReviews(await callReviews(restaurantName, '', onProgress));
+      } catch {
+        setReviewPhase({ status: 'error' });
+      }
+    })();
+  };
 
   // Guard: no scan in progress → home.
   useEffect(() => {
@@ -50,6 +127,27 @@ export default function OrientationScreen() {
   }, [menuContext, items.length, router]);
 
   if (!menuContext || items.length === 0) return <Loading message="Reading the room…" />;
+
+  // Map the local lifecycle onto the shared component's tile state. While
+  // loading, surface the REAL latest pipeline status line — never a fake timer.
+  const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
+  const crowdState: CrowdFavoritesState =
+    reviewPhase.status === 'offer'
+      ? { kind: 'offer', onFetch: fetchReviews }
+      : reviewPhase.status === 'loading'
+        ? {
+            kind: 'loading',
+            statusLine: lastStep
+              ? `${lastStep.label}${lastStep.detail ? ` — ${lastStep.detail}` : ''}`
+              : null,
+          }
+        : reviewPhase.status === 'loaded'
+          ? { kind: 'loaded', favorites: reviewPhase.entries }
+          : reviewPhase.status === 'empty'
+            ? { kind: 'empty' }
+            : reviewPhase.status === 'error'
+              ? { kind: 'empty', message: 'Review lookup failed — couldn’t reach the web.' }
+              : { kind: 'hidden' };
 
   const o = menuContext.orientation;
   const nameById = new Map(items.map((i) => [i.id, i.name]));
@@ -93,8 +191,7 @@ export default function OrientationScreen() {
           mode="scan"
           cuisine={cuisine}
           summary={o.summary}
-          // Crowd favorites arrive with the review-lookup flow; hidden until wired.
-          crowdFavorites={{ kind: 'hidden' }}
+          crowdFavorites={crowdState}
           menuHighlights={signatures}
         />
 

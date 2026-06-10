@@ -40,7 +40,7 @@ export default function QuestionsScreen() {
   const router = useRouter();
   const session = useSession();
   const { preferences, tdee } = useProfile();
-  const { candidates, verifyById, restaurantNotes, menuContext } = session;
+  const { candidates, verifyById, restaurantNotes, menuContext, crowdFavorites } = session;
 
   const [step, setStep] = useState<Step>('spice');
   const [spice, setSpice] = useState<SpiceLevel>(DEFAULT_SPICE);
@@ -84,6 +84,9 @@ export default function QuestionsScreen() {
     const verifyForPool = Object.fromEntries(
       Object.entries(verifyById).filter(([id]) => finalPool.some((i) => i.id === id))
     );
+    // Review-praised dishes still in the pool — one context line for ranking.
+    // (Gate-blocked items were never candidates, so they can't appear here.)
+    const crowdNames = finalPool.filter((i) => crowdFavorites[i.id]).map((i) => i.name);
     try {
       const picks = await callReason({
         items: finalPool,
@@ -93,6 +96,7 @@ export default function QuestionsScreen() {
         verifyById: verifyForPool,
         tdeeContext: tdee, // daily targets (null when the user hasn't set goals)
         restaurantNotes,
+        crowdFavorites: crowdNames,
         onProgress,
       });
       session.setOutcome({ questions, answers, spice: spiceLevel, picks });

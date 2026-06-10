@@ -36,7 +36,8 @@ Per item return ONLY:
 Name and price ONLY — do NOT add descriptions, ingredients, or any other field.
 This keeps the read fast.
 
-After the items, return a "menu_context" object.
+After the items, return a "menu_context" object. Set "restaurant_name" to the
+restaurant's name exactly as printed on the menu ("" if it isn't shown).
 
 In menu_context.orientation, act like a great server giving a 10-second intro
 BEFORE the guest reads anything. Be concise and confident:
@@ -51,6 +52,7 @@ If none exist, return an empty array.
 
 The menu_context shape is:
 {
+  "restaurant_name": string,  // exactly as printed on the menu; "" if not shown
   "cuisine_type": string,
   "orientation": {
     "summary": string,
@@ -316,6 +318,7 @@ function parseStrict(raw: string): { items?: unknown; menu_context?: unknown } {
 function normalizeMenuContext(raw: unknown): VisionMenuContext {
   const ctx = (raw ?? {}) as Partial<VisionMenuContext> & { orientation?: unknown };
   return {
+    restaurant_name: typeof ctx.restaurant_name === 'string' ? ctx.restaurant_name.trim() : '',
     cuisine_type: ctx.cuisine_type ?? 'unknown',
     orientation: normalizeOrientation(ctx.orientation),
     restaurant_notes: arr((ctx as { restaurant_notes?: unknown }).restaurant_notes),

@@ -72,6 +72,11 @@ type ReasonInput = {
   } | null;
   /** Whole-menu footer/header notes (halal certs, allergen policies, etc.). */
   restaurantNotes?: string[];
+  /**
+   * Names of candidate dishes that web reviews repeatedly praise (matched
+   * on-device). One short context line — lets picks cite real crowd opinion.
+   */
+  crowdFavorites?: string[];
   /** Live status reporting for the loading screen. */
   onProgress?: OnProgress;
 };
@@ -95,6 +100,7 @@ export async function callReason({
   verifyById,
   tdeeContext,
   restaurantNotes,
+  crowdFavorites,
   onProgress,
 }: ReasonInput): Promise<Pick[]> {
   // Annotate the verify survivors so the model knows which picks require a
@@ -121,6 +127,11 @@ export async function callReason({
     contextBlock += `Restaurant notes (apply to whole menu): ${restaurantNotes
       .map((n) => `"${n}"`)
       .join('; ')}\n`;
+  }
+  if (crowdFavorites && crowdFavorites.length > 0) {
+    contextBlock += `Web reviews repeatedly praise: ${crowdFavorites
+      .map((n) => `"${n}"`)
+      .join(', ')} — worth citing if one becomes a pick.\n`;
   }
 
   onProgress?.({

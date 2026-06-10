@@ -51,6 +51,9 @@ export type MenuOrientation = {
 
 /** Menu context produced by the Vision call (Call 1). */
 export type VisionMenuContext = {
+  /** Restaurant name as printed on the menu ("" when not visible). Keys the
+   *  review cache so the scan flow can surface crowd favorites for free. */
+  restaurant_name: string;
   cuisine_type: string;
   /** Orientation summary for Stage 1 (the narrowing questions are engine-built). */
   orientation: MenuOrientation;

@@ -335,6 +335,7 @@ export async function buildScanFromLookup(
 
   let enrichment = new Map<string, Record<string, unknown>>();
   let menuContext: VisionMenuContext = {
+    restaurant_name: '',
     cuisine_type: 'unknown',
     orientation: EMPTY_ORIENTATION,
     restaurant_notes: [],
@@ -373,6 +374,7 @@ export async function buildScanFromLookup(
     }
     const ctx = (parsed.menu_context ?? {}) as Partial<VisionMenuContext>;
     menuContext = {
+      restaurant_name: '',
       cuisine_type: typeof ctx.cuisine_type === 'string' ? ctx.cuisine_type : 'unknown',
       orientation: EMPTY_ORIENTATION,
       restaurant_notes: arr((ctx as { restaurant_notes?: unknown }).restaurant_notes),

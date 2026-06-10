@@ -162,10 +162,19 @@ async function main() {
       check('vision reads at least 5 dishes', vision.items.length >= 5, `${vision.items.length} items`);
       check('vision names a cuisine', vision.menu_context.cuisine_type.trim() !== '');
       check('every dish has a name', vision.items.every((i) => i.name.trim() !== ''));
+      check(
+        'menu_context carries restaurant_name as a string',
+        typeof vision.menu_context.restaurant_name === 'string'
+      );
       // The repo's bundled test-menu.jpg is the Burma Light menu (45 dishes,
       // halal note in the footer) — assert against its ground truth.
       if (!imgArg) {
         check('reads ≥35 of the 45 Burma Light dishes', vision.items.length >= 35, `${vision.items.length} items`);
+        check(
+          'reads the printed restaurant name (keys the review cache)',
+          /burma/i.test(vision.menu_context.restaurant_name),
+          JSON.stringify(vision.menu_context.restaurant_name)
+        );
         check(
           'captures the halal footer as a restaurant note',
           vision.menu_context.restaurant_notes.some((n) => /halal/i.test(n)),
