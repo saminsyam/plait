@@ -57,11 +57,13 @@ function flagLabel(flag: Pick['flag']): string | null {
  */
 function MacroBar({
   emoji,
+  label,
   value,
   max,
   color,
 }: {
   emoji: string;
+  label: string;
   value: number;
   max: number;
   color: string;
@@ -69,7 +71,9 @@ function MacroBar({
   const pct = Math.min(1, value / max);
   return (
     <View style={mb.row}>
-      <Text style={mb.emoji}>{emoji}</Text>
+      <Text style={mb.label}>
+        {emoji} {label}
+      </Text>
       <View style={mb.trackWrap}>
         <View style={mb.track}>
           <View style={[mb.fill, { width: `${Math.round(pct * 100)}%`, backgroundColor: color }]} />
@@ -82,7 +86,13 @@ function MacroBar({
 
 const mb = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  emoji: { fontSize: 14, width: 20 },
+  label: {
+    color: Plait.color.textDim,
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: Plait.font.sans,
+    width: 78,
+  },
   trackWrap: { flex: 1 },
   track: { height: 6, backgroundColor: Plait.color.background, borderRadius: 3, overflow: 'hidden' },
   fill: { height: 6, borderRadius: 3 },
@@ -377,13 +387,13 @@ function Card({
       {hasMacros && (
         <View style={styles.macroBlock}>
           {pick.protein_g != null && (
-            <MacroBar emoji="🟠" value={pick.protein_g} max={maxProtein} color="#E8704A" />
+            <MacroBar emoji="💪" label="Protein" value={pick.protein_g} max={maxProtein} color="#E8704A" />
           )}
           {pick.carbs_g != null && (
-            <MacroBar emoji="🟡" value={pick.carbs_g} max={maxCarbs} color="#E8B44A" />
+            <MacroBar emoji="🍞" label="Carbs" value={pick.carbs_g} max={maxCarbs} color="#E8B44A" />
           )}
           {pick.fat_g != null && (
-            <MacroBar emoji="⚪" value={pick.fat_g} max={maxFat} color="#9A958C" />
+            <MacroBar emoji="🧈" label="Fat" value={pick.fat_g} max={maxFat} color="#9A958C" />
           )}
           <Text style={styles.confidence}>Est. macros {confidenceLabel} accuracy</Text>
         </View>
