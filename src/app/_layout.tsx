@@ -23,7 +23,6 @@ export default function RootLayout() {
             <Stack.Screen name="preferences" />
             <Stack.Screen name="lookup" />
             <Stack.Screen name="camera" />
-            <Stack.Screen name="orientation" />
             <Stack.Screen name="questions" />
             <Stack.Screen name="results" />
             <Stack.Screen name="stats" />

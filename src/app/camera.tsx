@@ -63,7 +63,9 @@ export default function CameraScreen() {
       <CookingLoader
         done={done}
         steps={steps}
-        onReady={() => router.replace('/orientation')}
+        // Straight to the combined summary + picks screen — it kicks off the
+        // instant ranking itself; no question funnel in between.
+        onReady={() => router.replace('/results')}
         title="Reading your menu"
       />
     );

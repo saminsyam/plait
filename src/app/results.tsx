@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -15,9 +15,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { RestaurantSummary } from '@/components/restaurant-summary';
 import { Body, Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
+import { useCrowdFavorites } from '@/hooks/use-crowd-favorites';
+import { useProgressSteps, type ProgressStep } from '@/hooks/use-progress-steps';
 import { callDishDetail, type DishDetail } from '@/lib/callDishDetail';
+import { callReason } from '@/lib/callReason';
+import { DEFAULT_SPICE } from '@/lib/questionEngine';
 import { formatUsd, getUsage } from '@/lib/usage';
 import type { MenuItem, Pick } from '@/lib/types';
 import { useProfile } from '@/state/profile';
@@ -138,7 +143,21 @@ export default function ResultsScreen() {
   const router = useRouter();
   const session = useSession();
   const { preferences, tdee } = useProfile();
-  const { picks, items, questions, answers, restaurantNotes, blocked } = session;
+  const {
+    picks,
+    items,
+    questions,
+    answers,
+    restaurantNotes,
+    blocked,
+    candidates,
+    verifyById,
+    menuContext,
+    crowdFavorites,
+    picksSource,
+    setOutcome,
+  } = session;
+  const crowdState = useCrowdFavorites();
 
   // Expand/detail state — only one card open at a time.
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -155,14 +174,53 @@ export default function ResultsScreen() {
     return () => sub.remove();
   }, []);
 
-  // A scan with zero safe picks but a non-empty avoid list is still a valid
-  // result to show — don't bounce home in that case.
-  const isEmpty = picks.length === 0 && blocked.length === 0;
-  useEffect(() => {
-    if (isEmpty) router.replace('/');
-  }, [isEmpty, router]);
+  // ── Instant ranking — the scan lands here directly; picks arrive without
+  // questions. The narrowing flow is an optional refinement (button below).
+  const { steps, onProgress, resetProgress } = useProgressSteps();
+  const [rankState, setRankState] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
+  const rankStarted = useRef(false);
 
-  if (isEmpty) return <Loading message="Loading…" />;
+  const runRank = useCallback(async () => {
+    setRankState('running');
+    resetProgress();
+    try {
+      // One short context line for review-praised dishes still in the pool.
+      // (Gate-blocked items were never candidates, so they can't appear here.)
+      const crowdNames = candidates.filter((i) => crowdFavorites[i.id]).map((i) => i.name);
+      const ranked = await callReason({
+        items: candidates,
+        questions: [],
+        answers: {},
+        userPreferences: preferences ?? '',
+        verifyById,
+        tdeeContext: tdee,
+        restaurantNotes,
+        crowdFavorites: crowdNames,
+        onProgress,
+      });
+      setOutcome({ questions: [], answers: {}, spice: DEFAULT_SPICE, picks: ranked, source: 'instant' });
+      setRankState('done');
+    } catch {
+      setRankState('error');
+    }
+  }, [candidates, crowdFavorites, preferences, verifyById, tdee, restaurantNotes, onProgress, resetProgress, setOutcome]);
+
+  const hasScan = !!menuContext && items.length > 0;
+  useEffect(() => {
+    if (rankStarted.current) return;
+    if (!hasScan || candidates.length === 0) return;
+    // A ranking already ran for this scan (e.g. returning from refine).
+    if (picks.length > 0 || picksSource !== null) return;
+    rankStarted.current = true;
+    void runRank();
+  }, [hasScan, candidates.length, picks.length, picksSource, runRank]);
+
+  // Guard: no scan in progress → home.
+  useEffect(() => {
+    if (!hasScan) router.replace('/');
+  }, [hasScan, router]);
+
+  if (!hasScan) return <Loading message="Loading…" />;
 
   const byId = new Map(items.map((i) => [i.id, i]));
 
@@ -239,28 +297,64 @@ export default function ResultsScreen() {
     router.replace('/');
   };
 
+  // hasScan guarantees menuContext from here down.
+  const o = menuContext!.orientation;
+  const signatures = o.signature_item_ids
+    .map((id) => byId.get(id)?.name)
+    .filter((n): n is string => !!n);
+  const cuisine =
+    menuContext!.cuisine_type && menuContext!.cuisine_type !== 'unknown'
+      ? menuContext!.cuisine_type
+      : null;
+  const restaurantName = menuContext!.restaurant_name.trim();
+
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.head}>
-        <Title style={{ fontSize: 36 }}>Your picks</Title>
-        <Subtitle numberOfLines={2}>Ranked for {preferences ?? 'your preferences'}.</Subtitle>
-      </View>
-
-      {/* Restaurant-level trust signal (halal/kosher certification) */}
-      {trustNotes.length > 0 && (
-        <View style={styles.trustBanner}>
-          {trustNotes.map((note, i) => (
-            <Text key={i} style={styles.trustText}>✓ Restaurant note: “{note}”</Text>
-          ))}
-        </View>
-      )}
-
       <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
-        {picks.length === 0 && (
+        <View style={styles.head}>
+          <Title style={{ fontSize: 34 }} numberOfLines={2}>
+            {restaurantName || 'Here’s the place'}
+          </Title>
+          <Subtitle numberOfLines={2}>Ranked for {preferences ?? 'your preferences'}.</Subtitle>
+        </View>
+
+        {/* The 10-second restaurant read, shared with the lookup page. */}
+        <RestaurantSummary
+          mode="scan"
+          cuisine={cuisine}
+          summary={o.summary}
+          knownFor={o.known_for}
+          crowdFavorites={crowdState}
+          menuHighlights={signatures}
+        />
+
+        {/* Restaurant-level trust signal (halal/kosher certification) */}
+        {trustNotes.length > 0 && (
+          <View style={styles.trustBanner}>
+            {trustNotes.map((note, i) => (
+              <Text key={i} style={styles.trustText}>✓ Restaurant note: “{note}”</Text>
+            ))}
+          </View>
+        )}
+
+        {candidates.length > 0 && <Text style={styles.picksHeader}>Your top picks</Text>}
+
+        {candidates.length === 0 && (
           <Body style={styles.emptyPicks}>
             Nothing on this menu cleared your hard restrictions. The dishes below
             were ruled out for safety — ask staff if you want to double-check any.
           </Body>
+        )}
+
+        {/* Live ranking status — real pipeline events, never a fake timer. */}
+        {rankState === 'running' && <RankStatus steps={steps} />}
+        {rankState === 'error' && (
+          <View style={styles.rankBox}>
+            <Body style={styles.emptyPicks}>
+              The menu is read — only the ranking failed. Give it another go.
+            </Body>
+            <PrimaryButton label="Try ranking again" onPress={() => void runRank()} />
+          </View>
         )}
 
         {picks.map((pick, i) => {
@@ -287,6 +381,15 @@ export default function ResultsScreen() {
           );
         })}
 
+        {/* The narrowing flow, demoted to an optional refinement. */}
+        {picks.length > 0 && rankState !== 'running' && candidates.length > 1 && (
+          <PrimaryButton
+            label="🎯  Not quite? Refine my picks"
+            variant="teal"
+            onPress={() => router.push('/questions')}
+          />
+        )}
+
         {/* Avoid list — the hard-gate's blocked items, with reasons. Kept
             visually secondary to the top picks above. */}
         {blocked.length > 0 && (
@@ -307,6 +410,41 @@ export default function ResultsScreen() {
         <UsageLine />
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * Inline ranking status — one row per real pipeline stage (same events the
+ * full-screen CookingLoader consumes elsewhere), shown where the pick cards
+ * will appear so the page reads "summary now, picks streaming in".
+ */
+function RankStatus({ steps }: { steps: ProgressStep[] }) {
+  // Re-render a few times a second so the per-step timers tick (the timers
+  // are real elapsed time — only the redraw is on an interval).
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 250);
+    return () => clearInterval(id);
+  }, []);
+
+  const now = Date.now();
+  return (
+    <View style={styles.rankBox}>
+      {steps.length === 0 && <Text style={styles.rankRow}>🔥 Warming up…</Text>}
+      {steps.map((step) => {
+        const isDone = step.status === 'done';
+        const seconds = (((step.endedAt ?? now) - step.startedAt) / 1000).toFixed(1);
+        return (
+          <View key={step.id} style={styles.rankLine}>
+            <Text style={styles.rankRow} numberOfLines={1}>
+              {isDone ? '✅' : step.icon} {step.label}
+              {step.detail ? ` — ${step.detail}` : ''}
+            </Text>
+            <Text style={styles.rankTime}>{seconds}s</Text>
+          </View>
+        );
+      })}
+    </View>
   );
 }
 
@@ -560,6 +698,27 @@ const styles = StyleSheet.create({
   cardFooter: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   tapHint: { color: Plait.color.textDim, fontSize: 12, fontFamily: Plait.font.sans },
   chevron: { color: Plait.color.textDim, fontSize: 16 },
+
+  // Picks section header + inline ranking status
+  picksHeader: {
+    color: Plait.color.textDim,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    fontFamily: Plait.font.sans,
+  },
+  rankBox: {
+    backgroundColor: Plait.color.card,
+    borderRadius: Plait.radius.md,
+    borderWidth: 1,
+    borderColor: Plait.color.border,
+    padding: Plait.space.md,
+    gap: Plait.space.sm,
+  },
+  rankLine: { flexDirection: 'row', alignItems: 'center', gap: Plait.space.sm },
+  rankRow: { flex: 1, color: Plait.color.text, fontSize: 14, fontFamily: Plait.font.sans },
+  rankTime: { color: Plait.color.textDim, fontSize: 12, fontFamily: Plait.font.sans },
 
   // Empty + avoid list (secondary to the picks)
   emptyPicks: { color: Plait.color.textDim, fontSize: 14, lineHeight: 20 },

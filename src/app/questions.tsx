@@ -1,9 +1,10 @@
 /**
- * Stage 2 — Preference discovery (narrowing). The deterministic engine drives
- * this entirely on-device: a constant 3-way spice selector, then a short series
- * of binary questions, each chosen for maximum information gain against the
- * REMAINING candidates. When the pool is small enough, Stage 3 (reasoning) runs
- * over just that handful — never the whole menu.
+ * Optional refinement (reached from the results screen's "Refine my picks").
+ * The deterministic engine drives this entirely on-device: a constant 3-way
+ * spice selector, then a short series of binary questions, each chosen for
+ * maximum information gain against the REMAINING candidates. When the pool is
+ * small enough, reasoning re-runs over just that handful and the refined picks
+ * replace the instant ones back on results.
  */
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -59,10 +60,10 @@ export default function QuestionsScreen() {
     if (!menuContext) router.replace('/');
   }, [menuContext, router]);
 
-  // No safe candidates at all → skip straight to the (avoid-only) results.
+  // No safe candidates at all → nothing to refine; back to (avoid-only) results.
   useEffect(() => {
     if (menuContext && candidates.length === 0) {
-      session.setOutcome({ questions: [], answers: {}, spice: DEFAULT_SPICE, picks: [] });
+      session.setOutcome({ questions: [], answers: {}, spice: DEFAULT_SPICE, picks: [], source: 'refined' });
       router.replace('/results');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -71,7 +72,8 @@ export default function QuestionsScreen() {
   if (!menuContext) return <Loading message="Loading…" />;
   if (busy) {
     return (
-      <CookingLoader done={done} steps={steps} onReady={() => router.replace('/results')} title="Finding your match" />
+      // Pop back to results — it re-renders with the refined picks from session.
+      <CookingLoader done={done} steps={steps} onReady={() => router.back()} title="Refining your picks" />
     );
   }
 
@@ -99,7 +101,7 @@ export default function QuestionsScreen() {
         crowdFavorites: crowdNames,
         onProgress,
       });
-      session.setOutcome({ questions, answers, spice: spiceLevel, picks });
+      session.setOutcome({ questions, answers, spice: spiceLevel, picks, source: 'refined' });
       setDone(true);
     } catch (e) {
       setBusy(false);
@@ -158,7 +160,7 @@ export default function QuestionsScreen() {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <NavLink label="‹ Menu intro" onPress={() => router.replace('/orientation')} />
+          <NavLink label="‹ Back to picks" onPress={() => router.back()} />
           <Text style={styles.progress}>First, the basics</Text>
         </View>
         <View style={styles.body}>
@@ -185,8 +187,8 @@ export default function QuestionsScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        {/* Re-entering restarts narrowing from the full pool — that's the point. */}
-        <NavLink label="‹ Restart" onPress={() => router.replace('/orientation')} />
+        {/* Bail out mid-refinement — the instant picks are still on results. */}
+        <NavLink label="‹ Back to picks" onPress={() => router.back()} />
         <Text style={styles.progress}>{pool.length} dishes in the running</Text>
       </View>
       <Title style={styles.q}>{question.question}</Title>

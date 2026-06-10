@@ -38,9 +38,15 @@ type SessionState = {
   /**
    * item_id → crowd-favorite dish name, matched on-device from cached/fetched
    * web reviews. Purely additive flavor: feeds ONE context line into the
-   * ranking call and badges the orientation tile. Never affects the gate.
+   * ranking call and badges the crowd-favorites tile. Never affects the gate.
    */
   crowdFavorites: Record<string, string>;
+  /**
+   * Where the current picks came from: 'instant' (ranked straight off the
+   * scan, no questions) or 'refined' (through the narrowing flow). Null until
+   * a ranking has run for this scan.
+   */
+  picksSource: 'instant' | 'refined' | null;
 };
 
 type SessionValue = SessionState & {
@@ -52,8 +58,14 @@ type SessionValue = SessionState & {
     verifyById: Record<string, string[]>;
     blocked: FilteredItem[];
   }) => void;
-  /** Record the narrowing result + ranked picks once Stage 3 completes. */
-  setOutcome: (input: { questions: Question[]; answers: Answers; spice: number; picks: Pick[] }) => void;
+  /** Record a ranking outcome (instant or refined) — questions/answers may be empty. */
+  setOutcome: (input: {
+    questions: Question[];
+    answers: Answers;
+    spice: number;
+    picks: Pick[];
+    source: 'instant' | 'refined';
+  }) => void;
   /** Record the review-matched crowd favorites for this scan (itemId → name). */
   setCrowdFavorites: (map: Record<string, string>) => void;
   reset: () => void;
@@ -72,6 +84,7 @@ const EMPTY: SessionState = {
   picks: [],
   restaurantNotes: [],
   crowdFavorites: {},
+  picksSource: null,
 };
 
 const SessionContext = createContext<SessionValue | null>(null);
@@ -96,8 +109,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     []
   );
   const setOutcome = useCallback<SessionValue['setOutcome']>(
-    ({ questions, answers, spice, picks }) =>
-      setState((s) => ({ ...s, questions, answers, spice, picks })),
+    ({ questions, answers, spice, picks, source }) =>
+      setState((s) => ({ ...s, questions, answers, spice, picks, picksSource: source })),
     []
   );
   const setCrowdFavorites = useCallback<SessionValue['setCrowdFavorites']>(

@@ -46,6 +46,7 @@ export function RestaurantSummary({
   mode,
   cuisine,
   summary,
+  knownFor,
   crowdFavorites,
   menuHighlights,
 }: {
@@ -54,6 +55,8 @@ export function RestaurantSummary({
   cuisine?: string | null;
   /** One-line summary of the place. */
   summary: string;
+  /** What the place is known for — chips under the summary (menu-inferred). */
+  knownFor?: string[];
   crowdFavorites: CrowdFavoritesState;
   /** Names of menu-inferred signature dishes (rendered in scan mode only). */
   menuHighlights?: string[];
@@ -66,6 +69,16 @@ export function RestaurantSummary({
         <Text style={styles.kicker}>{cuisine.toUpperCase()}</Text>
       )}
       {!!summary && <Subtitle style={styles.summary}>{summary}</Subtitle>}
+
+      {(knownFor?.length ?? 0) > 0 && (
+        <View style={styles.chips}>
+          {knownFor!.map((k, i) => (
+            <View key={i} style={styles.chip}>
+              <Text style={styles.chipText}>{k}</Text>
+            </View>
+          ))}
+        </View>
+      )}
 
       {crowdFavorites.kind !== 'hidden' && (
         <Tile emoji="🌟" title="Crowd favorites" provenance="from web reviews">
@@ -217,4 +230,15 @@ const styles = StyleSheet.create({
 
   statusLine: { color: Plait.color.textDim, fontSize: 14, fontFamily: Plait.font.sans },
   bullet: { color: Plait.color.text, fontSize: 16, lineHeight: 24, fontFamily: Plait.font.sans },
+
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: Plait.space.sm, marginBottom: Plait.space.xs },
+  chip: {
+    backgroundColor: Plait.color.card,
+    borderWidth: 1,
+    borderColor: Plait.color.border,
+    borderRadius: Plait.radius.pill,
+    paddingVertical: 6,
+    paddingHorizontal: Plait.space.sm,
+  },
+  chipText: { color: Plait.color.text, fontSize: 13, fontWeight: '600', fontFamily: Plait.font.sans },
 });
