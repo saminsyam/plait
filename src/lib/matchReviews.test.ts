@@ -12,7 +12,7 @@ import { test } from 'node:test';
 
 import type { CrowdFavorite } from './callReviews';
 import type { HardConstraints } from './dietaryFilter';
-import { crowdFavoriteWarning, matchCrowdFavorites } from './matchReviews';
+import { crowdFavoriteWarning, gateCrowdFavorites, matchCrowdFavorites } from './matchReviews';
 import type { MenuItem } from './types';
 
 const item = (id: string, name: string): MenuItem => ({
@@ -102,4 +102,34 @@ test('halal rule warns on pork and alcohol keywords', () => {
   assert.ok(crowdFavoriteWarning('Bacon Cheeseburger', halal));
   assert.ok(crowdFavoriteWarning('Beer-Battered Cod', halal));
   assert.equal(crowdFavoriteWarning('Grilled Chicken', halal), null); // unknown ≠ conflict
+});
+
+// --- gateCrowdFavorites --------------------------------------------------------
+
+test('a favorite matching a gate-blocked dish keeps its badge but warns and never ranks', () => {
+  const shrimp = item('9', 'Garlic Shrimp');
+  const blocked = [{ item: shrimp, outcome: 'blocked' as const, reasons: ['contains shellfish'] }];
+  const matches = matchCrowdFavorites([fav('Garlic Shrimp'), fav('Mohinga')], [...MENU, shrimp]);
+  const { entries, rankable } = gateCrowdFavorites(matches, blocked);
+
+  const shrimpEntry = entries.find((e) => e.name === 'Garlic Shrimp')!;
+  assert.equal(shrimpEntry.onMenu, true); // honest — it IS on the menu
+  assert.equal(shrimpEntry.warning, 'contains shellfish');
+  assert.ok(!('9' in rankable)); // blocked dishes are never cited to the ranker
+
+  const mohinga = entries.find((e) => e.name === 'Mohinga')!;
+  assert.equal(mohinga.onMenu, true);
+  assert.equal(mohinga.warning, null);
+  assert.equal(rankable['3'], 'Mohinga');
+});
+
+test('unmatched favorites carry no badge, no warning, and never rank', () => {
+  const { entries, rankable } = gateCrowdFavorites(
+    matchCrowdFavorites([fav('Pork Belly Bao')], MENU),
+    []
+  );
+  assert.deepEqual(entries, [
+    { name: 'Pork Belly Bao', blurb: '', onMenu: false, warning: null },
+  ]);
+  assert.deepEqual(rankable, {});
 });

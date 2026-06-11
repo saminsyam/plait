@@ -4,16 +4,24 @@
  * returned dish names to scanned items on-device (zero tokens), and record
  * the matches into the session so the ranking call can cite them.
  *
- * Returns the tile state the shared <RestaurantSummary> renders. Owns its own
- * useProgressSteps so the tile's loading line shows the REAL latest pipeline
- * status — independent of any other progress stream on the screen.
+ * The dietary gate is folded into the tile: a review favorite that maps to a
+ * gate-BLOCKED dish still shows its honest "on this menu" badge but carries
+ * the gate's reasons as an inline ⚠️, and never enters the session map the
+ * ranking context reads.
+ *
+ * `crowdReady` flips true once the initial cache check has resolved — the
+ * instant rank waits for it so cached crowd favorites make it into the very
+ * first ranking call instead of racing it.
+ *
+ * Owns its own useProgressSteps so the tile's loading line shows the REAL
+ * latest pipeline status — independent of any other progress stream.
  */
 import { useCallback, useEffect, useState } from 'react';
 
 import type { CrowdFavoriteEntry, CrowdFavoritesState } from '@/components/restaurant-summary';
 import { useProgressSteps } from '@/hooks/use-progress-steps';
 import { callReviews, getCachedReviews, type ReviewsResult } from '@/lib/callReviews';
-import { matchCrowdFavorites } from '@/lib/matchReviews';
+import { gateCrowdFavorites, matchCrowdFavorites } from '@/lib/matchReviews';
 import { useSession } from '@/state/session';
 
 /** Where the crowd-favorites tile is in its lifecycle. */
@@ -25,37 +33,31 @@ type ReviewPhase =
   | { status: 'empty' } // search ran dry
   | { status: 'error' };
 
-export function useCrowdFavorites(): CrowdFavoritesState {
-  const { menuContext, items, setCrowdFavorites } = useSession();
+export function useCrowdFavorites(): { crowdState: CrowdFavoritesState; crowdReady: boolean } {
+  const { menuContext, items, blocked, setCrowdFavorites } = useSession();
   const restaurantName = menuContext?.restaurant_name.trim() ?? '';
 
   const [reviewPhase, setReviewPhase] = useState<ReviewPhase>({ status: 'hidden' });
+  const [crowdReady, setCrowdReady] = useState(false);
   const { steps, onProgress, resetProgress } = useProgressSteps();
 
   // Fold a fetched/cached review result into the tile + the session map the
-  // ranking call reads. Matching is pure string work — zero tokens.
+  // ranking call reads. Matching is pure string work — zero tokens; blocked
+  // matches get the gate's warning and stay out of the rankable map.
   const applyReviews = useCallback(
     (r: ReviewsResult) => {
       if (!r.found) {
         setReviewPhase({ status: 'empty' });
         return;
       }
-      const matches = matchCrowdFavorites(r.crowd_favorites, items);
-      setCrowdFavorites(
-        Object.fromEntries(
-          matches.filter((m) => m.itemId !== null).map((m) => [m.itemId as string, m.favorite.name])
-        )
+      const { entries, rankable } = gateCrowdFavorites(
+        matchCrowdFavorites(r.crowd_favorites, items),
+        blocked
       );
-      setReviewPhase({
-        status: 'loaded',
-        entries: matches.map((m) => ({
-          name: m.favorite.name,
-          blurb: m.favorite.blurb,
-          onMenu: m.itemId !== null,
-        })),
-      });
+      setCrowdFavorites(rankable);
+      setReviewPhase({ status: 'loaded', entries });
     },
-    [items, setCrowdFavorites]
+    [items, blocked, setCrowdFavorites]
   );
 
   // Cached reviews are free — light the tile up without spending anything.
@@ -63,6 +65,7 @@ export function useCrowdFavorites(): CrowdFavoritesState {
   useEffect(() => {
     if (!restaurantName) {
       setReviewPhase({ status: 'hidden' });
+      setCrowdReady(true);
       return;
     }
     let active = true;
@@ -71,6 +74,7 @@ export function useCrowdFavorites(): CrowdFavoritesState {
       if (!active) return;
       if (cached) applyReviews(cached);
       else setReviewPhase({ status: 'offer' });
+      setCrowdReady(true);
     })();
     return () => {
       active = false;
@@ -92,23 +96,30 @@ export function useCrowdFavorites(): CrowdFavoritesState {
   // Map the local lifecycle onto the shared component's tile state. While
   // loading, surface the REAL latest pipeline status line — never a fake timer.
   const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
+  let crowdState: CrowdFavoritesState;
   switch (reviewPhase.status) {
     case 'offer':
-      return { kind: 'offer', onFetch: fetchReviews };
+      crowdState = { kind: 'offer', onFetch: fetchReviews };
+      break;
     case 'loading':
-      return {
+      crowdState = {
         kind: 'loading',
         statusLine: lastStep
           ? `${lastStep.label}${lastStep.detail ? ` — ${lastStep.detail}` : ''}`
           : null,
       };
+      break;
     case 'loaded':
-      return { kind: 'loaded', favorites: reviewPhase.entries };
+      crowdState = { kind: 'loaded', favorites: reviewPhase.entries };
+      break;
     case 'empty':
-      return { kind: 'empty' };
+      crowdState = { kind: 'empty' };
+      break;
     case 'error':
-      return { kind: 'empty', message: 'Review lookup failed — couldn’t reach the web.' };
+      crowdState = { kind: 'empty', message: 'Review lookup failed — couldn’t reach the web.' };
+      break;
     default:
-      return { kind: 'hidden' };
+      crowdState = { kind: 'hidden' };
   }
+  return { crowdState, crowdReady };
 }

@@ -13,6 +13,7 @@
 import type { CrowdFavorite } from './callReviews';
 import {
   classifyAgainstConstraint,
+  type FilteredItem,
   type HardConstraints,
 } from './dietaryFilter';
 import type { MenuItem } from './types';
@@ -89,6 +90,43 @@ export function matchCrowdFavorites(
     if (best) taken.add(best.id);
     return { favorite, itemId: best ? best.id : null };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Folding the dietary gate into matches (scan flow)
+// ---------------------------------------------------------------------------
+
+export type GatedFavorite = {
+  name: string;
+  blurb: string;
+  onMenu: boolean;
+  /** The gate's reasons when the matched dish is blocked for this user. */
+  warning: string | null;
+};
+
+/**
+ * Fold gate results into the matches. A review favorite that maps to a
+ * gate-BLOCKED dish keeps its honest "on this menu" badge but carries the
+ * gate's reasons as an inline ⚠️ — and is excluded from the itemId→name map
+ * handed to the ranking context, so a blocked dish can never be cited.
+ */
+export function gateCrowdFavorites(
+  matches: FavoriteMatch[],
+  blocked: FilteredItem[]
+): { entries: GatedFavorite[]; rankable: Record<string, string> } {
+  const blockedById = new Map(blocked.map((b) => [b.item.id, b.reasons]));
+  const entries = matches.map(({ favorite, itemId }) => ({
+    name: favorite.name,
+    blurb: favorite.blurb,
+    onMenu: itemId !== null,
+    warning:
+      itemId !== null && blockedById.has(itemId) ? blockedById.get(itemId)!.join(' · ') : null,
+  }));
+  const rankable: Record<string, string> = {};
+  for (const { favorite, itemId } of matches) {
+    if (itemId !== null && !blockedById.has(itemId)) rankable[itemId] = favorite.name;
+  }
+  return { entries, rankable };
 }
 
 // ---------------------------------------------------------------------------

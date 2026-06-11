@@ -159,7 +159,7 @@ export default function ResultsScreen() {
     picksSource,
     setOutcome,
   } = session;
-  const crowdState = useCrowdFavorites();
+  const { crowdState, crowdReady } = useCrowdFavorites();
 
   // Expand/detail state — only one card open at a time.
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -219,11 +219,14 @@ export default function ResultsScreen() {
   useEffect(() => {
     if (rankStarted.current) return;
     if (!hasScan || candidates.length === 0) return;
+    // Wait for the (local, fast) review-cache check so cached crowd favorites
+    // make it into the very first ranking call instead of racing it.
+    if (!crowdReady) return;
     // A ranking already ran for this scan (e.g. returning from refine).
     if (picks.length > 0 || picksSource !== null) return;
     rankStarted.current = true;
     void runRank([]);
-  }, [hasScan, candidates.length, picks.length, picksSource, runRank]);
+  }, [hasScan, candidates.length, picks.length, picksSource, crowdReady, runRank]);
 
   // One-tap corrections: toggle a chip → one re-rank with the new set.
   const toggleTune = (id: QuickTuneId) => {
