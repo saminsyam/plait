@@ -24,6 +24,7 @@ import { callDishDetail, type DishDetail } from '@/lib/callDishDetail';
 import { callReason } from '@/lib/callReason';
 import { filterBySpice, nextQuestion } from '@/lib/questionEngine';
 import { applyQuickTunes, QUICK_TUNES, tuneRequests, type QuickTuneId } from '@/lib/quickTune';
+import { refineNudge } from '@/lib/refineNudge';
 import { formatUsd, getUsage } from '@/lib/usage';
 import type { MenuItem, Pick } from '@/lib/types';
 import { useProfile } from '@/state/profile';
@@ -232,6 +233,8 @@ export default function ResultsScreen() {
     void runRank(next);
   };
 
+  const [nudgeDismissed, setNudgeDismissed] = useState(false);
+
   // Guard: no scan in progress → home.
   useEffect(() => {
     if (!hasScan) router.replace('/');
@@ -325,6 +328,18 @@ export default function ResultsScreen() {
       : null;
   const restaurantName = menuContext!.restaurant_name.trim();
 
+  // Refinement availability + the deterministic "would questions help?" nudge.
+  const trimmedPool = filterBySpice(candidates, spiceCeiling);
+  const refinable = picks.length > 0 && nextQuestion(trimmedPool, new Set()) !== null;
+  const nudge =
+    refinable && picksSource === 'instant' && !nudgeDismissed && rankState !== 'running'
+      ? refineNudge({
+          poolSize: trimmedPool.length,
+          preferencesText: preferences ?? '',
+          picks,
+        })
+      : null;
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
@@ -355,6 +370,19 @@ export default function ResultsScreen() {
         )}
 
         {candidates.length > 0 && <Text style={styles.picksHeader}>Your top picks</Text>}
+
+        {/* Deterministic nudge — shown only when refinement would plausibly
+            sharpen the instant picks; one tap to refine, ✕ to dismiss. */}
+        {nudge && (
+          <View style={styles.nudgeRow}>
+            <Pressable style={styles.nudgeBody} onPress={() => router.push('/questions')} hitSlop={6}>
+              <Text style={styles.nudgeText}>💡 {nudge}</Text>
+            </Pressable>
+            <Pressable onPress={() => setNudgeDismissed(true)} hitSlop={10}>
+              <Text style={styles.nudgeClose}>✕</Text>
+            </Pressable>
+          </View>
+        )}
 
         {/* Quick-tune chips — deterministic pool filters + one context line,
             one re-rank per tap. Far lighter than the full refine flow. */}
@@ -424,15 +452,13 @@ export default function ResultsScreen() {
 
         {/* The narrowing flow, demoted to an optional refinement — hidden when
             no facet could split the (spice-trimmed) pool anyway. */}
-        {picks.length > 0 &&
-          rankState !== 'running' &&
-          nextQuestion(filterBySpice(candidates, spiceCeiling), new Set()) !== null && (
-            <PrimaryButton
-              label="🎯  Not quite? Refine my picks"
-              variant="teal"
-              onPress={() => router.push('/questions')}
-            />
-          )}
+        {refinable && rankState !== 'running' && (
+          <PrimaryButton
+            label="🎯  Not quite? Refine my picks"
+            variant="teal"
+            onPress={() => router.push('/questions')}
+          />
+        )}
 
         {/* Avoid list — the hard-gate's blocked items, with reasons. Kept
             visually secondary to the top picks above. */}
@@ -777,6 +803,22 @@ const styles = StyleSheet.create({
   tuneChipActive: { backgroundColor: Plait.color.coral, borderColor: Plait.color.coral },
   tuneChipText: { color: Plait.color.text, fontSize: 13, fontWeight: '600', fontFamily: Plait.font.sans },
   tuneChipTextActive: { color: '#111111' },
+
+  // Refine nudge
+  nudgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Plait.space.sm,
+    backgroundColor: 'rgba(78,205,196,0.10)',
+    borderColor: Plait.color.teal,
+    borderWidth: 1,
+    borderRadius: Plait.radius.sm,
+    paddingVertical: 10,
+    paddingHorizontal: Plait.space.sm,
+  },
+  nudgeBody: { flex: 1 },
+  nudgeText: { color: Plait.color.teal, fontSize: 13, fontWeight: '600', fontFamily: Plait.font.sans, lineHeight: 18 },
+  nudgeClose: { color: Plait.color.textDim, fontSize: 14, fontWeight: '700', fontFamily: Plait.font.sans },
 
   // Empty + avoid list (secondary to the picks)
   emptyPicks: { color: Plait.color.textDim, fontSize: 14, lineHeight: 20 },
