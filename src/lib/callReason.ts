@@ -83,6 +83,24 @@ type ReasonInput = {
   onProgress?: OnProgress;
 };
 
+/**
+ * Slim a gate survivor down to the fields the ranking prompt actually uses.
+ * `category` and `cuisine_type` only serve the on-device narrowing engine,
+ * which has already run; empty/zero fields carry no signal worth the tokens.
+ */
+function slimItem(item: MenuItem): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: item.id, name: item.name };
+  if (item.price > 0) out.price = item.price;
+  if (item.description) out.description = item.description;
+  if (item.ingredients.length > 0) out.ingredients = item.ingredients;
+  if (item.flavor_profile.length > 0) out.flavor_profile = item.flavor_profile;
+  if (item.texture.length > 0) out.texture = item.texture;
+  if (item.spice_level > 0) out.spice_level = item.spice_level;
+  if (item.dietary_tags.length > 0) out.dietary_tags = item.dietary_tags;
+  if (item.protein_type.length > 0) out.protein_type = item.protein_type;
+  return out;
+}
+
 function describeAnswers(questions: Question[], answers: Answers): Record<string, string> {
   const out: Record<string, string> = {};
   for (const q of questions) {
@@ -109,10 +127,11 @@ export async function callReason({
   // Annotate the verify survivors so the model knows which picks require a
   // "verify with staff" note. Allowed items are passed through untouched.
   const menuItems = items.map((item) => {
+    const slim = slimItem(item);
     const reasons = verifyById?.[item.id];
     return reasons && reasons.length > 0
-      ? { ...item, needs_verification: true, verify_reasons: reasons }
-      : item;
+      ? { ...slim, needs_verification: true, verify_reasons: reasons }
+      : slim;
   });
 
   const userPayload = {
@@ -159,7 +178,7 @@ export async function callReason({
           'Pick the best dishes for me from this menu.\n\n' +
           contextBlock +
           '\n' +
-          JSON.stringify(userPayload, null, 2),
+          JSON.stringify(userPayload),
       },
     ],
     // Each pick carries one "item_id" key — counting them as they stream in
