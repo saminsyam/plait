@@ -133,9 +133,13 @@ async function main() {
     const candidates = [...liveGate.allowed, ...liveGate.verify.map((v) => v.item)];
     check('a rankable candidate pool survives', candidates.length >= 4, `${candidates.length} candidates`);
 
-    // 2d. Rank with Sonnet, with TDEE targets in play.
+    // 2d. Rank with Sonnet exactly like the app's INSTANT path: empty Q/A,
+    // profile spice ceiling pre-trimming the pool, TDEE targets in play.
+    const { filterBySpice, DEFAULT_SPICE } = await import('../src/lib/questionEngine');
+    const instantPool = filterBySpice(candidates, DEFAULT_SPICE);
+    check('spice pre-trim keeps a rankable pool', instantPool.length >= 1, `${instantPool.length} of ${candidates.length}`);
     const picks = await callReason({
-      items: candidates,
+      items: instantPool,
       questions: [],
       answers: {},
       userPreferences: 'halal, allergic to shellfish, high-protein',
@@ -143,9 +147,9 @@ async function main() {
       tdeeContext: { calories: 2400, protein_g: 160, carbs_g: 250, fat_g: 70 },
       restaurantNotes: [],
     });
-    const candidateIds = new Set(candidates.map((i) => i.id));
+    const candidateIds = new Set(instantPool.map((i) => i.id));
     check('reason returns 1–3 picks', picks.length >= 1 && picks.length <= 3, `${picks.length} picks`);
-    check('every pick is a real candidate', picks.every((p) => candidateIds.has(p.item_id)));
+    check('every pick is from the spice-trimmed instant pool', picks.every((p) => candidateIds.has(p.item_id)));
     check('ranks are ascending + unique', picks.every((p, i) => p.rank === i + 1));
     check('every pick has a specific why', picks.every((p) => p.why.trim().length > 10));
     const blockedIds = new Set(liveGate.blocked.map((b) => b.item.id));
