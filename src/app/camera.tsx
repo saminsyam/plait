@@ -1,14 +1,20 @@
+/**
+ * Camera IS home (v2 spec §3): open app → frame the menu → photo → picks.
+ * Everything else — lookup, dietary profile, daily goals, stats — lives
+ * behind the one corner element (☰) so the golden path stays ≤ 2 taps.
+ */
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CookingLoader } from '@/components/cooking-loader';
-import { Body, Loading, NavLink, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
+import { Body, Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
+import { APP_VERSION } from '@/constants/version';
 import { useProgressSteps } from '@/hooks/use-progress-steps';
 import { callVision } from '@/lib/callVision';
 import { applyHardGate } from '@/lib/dietaryFilter';
@@ -17,6 +23,93 @@ import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
 
 type Shot = { uri: string };
+
+/**
+ * The corner element: one ☰ button, one top sheet with everything that is
+ * NOT the golden path. `dark` renders the button as an on-camera pill.
+ */
+function CornerMenu({ dark }: { dark?: boolean }) {
+  const router = useRouter();
+  const { preferences, tdee } = useProfile();
+  const [open, setOpen] = useState(false);
+  const go = (path: string) => {
+    setOpen(false);
+    router.push(path as Parameters<typeof router.push>[0]);
+  };
+
+  return (
+    <>
+      <Pressable
+        onPress={() => setOpen(true)}
+        hitSlop={10}
+        accessibilityRole="button"
+        accessibilityLabel="Menu"
+        style={[menu.button, dark && menu.buttonDark]}>
+        <Text style={[menu.buttonIcon, dark && menu.buttonIconDark]}>☰</Text>
+      </Pressable>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={menu.backdrop} onPress={() => setOpen(false)}>
+          <Pressable style={menu.sheet} onPress={() => {}}>
+            <View style={menu.head}>
+              <Text style={menu.logo}>
+                pl<Text style={{ color: Plait.color.green }}>AI</Text>t
+              </Text>
+              <Text style={menu.version}>{APP_VERSION}</Text>
+            </View>
+            <MenuRow
+              icon="🔎"
+              label="Look up a restaurant"
+              sub="before you go — one web search"
+              onPress={() => go('/lookup')}
+            />
+            <MenuRow
+              icon="✎"
+              label="Dietary profile"
+              sub={preferences ?? 'tell me what you avoid'}
+              onPress={() => go('/preferences?edit=1')}
+            />
+            <MenuRow
+              icon="🔥"
+              label="Daily goals"
+              sub={
+                tdee
+                  ? `${tdee.calories.toLocaleString()} kcal · P${tdee.protein_g} C${tdee.carbs_g} F${tdee.fat_g}`
+                  : 'set calories & macros'
+              }
+              onPress={() => go('/tdee?edit=1')}
+            />
+            <MenuRow icon="⚡" label="Session stats" sub="API calls & cost" onPress={() => go('/stats')} />
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+
+function MenuRow({
+  icon,
+  label,
+  sub,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  sub: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [menu.row, pressed && { opacity: 0.7 }]}>
+      <Text style={menu.rowIcon}>{icon}</Text>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={menu.rowLabel}>{label}</Text>
+        <Text style={menu.rowSub} numberOfLines={1}>
+          {sub}
+        </Text>
+      </View>
+      <Text style={menu.rowChevron}>›</Text>
+    </Pressable>
+  );
+}
 
 /** Turn an error from the Vision pipeline into a friendly, actionable message. */
 function messageForError(e: unknown): string {
@@ -78,13 +171,17 @@ export default function CameraScreen() {
   if (!permission.granted && !shot) {
     return (
       <SafeAreaView style={styles.gate}>
-        <Title style={{ fontSize: 32 }}>Camera access</Title>
-        <Subtitle style={{ textAlign: 'center' }}>
-          plAIt needs your camera to read the menu in front of you — or upload a photo instead.
-        </Subtitle>
-        <PrimaryButton label="Allow camera" onPress={requestPermission} />
-        <PrimaryButton label="🖼  Upload a photo" variant="teal" onPress={pickFromLibrary} />
-        <PrimaryButton label="Back" variant="ghost" onPress={() => router.back()} />
+        <View style={styles.gateTop}>
+          <CornerMenu />
+        </View>
+        <View style={styles.gateBody}>
+          <Title style={{ fontSize: 32 }}>Camera access</Title>
+          <Subtitle style={{ textAlign: 'center' }}>
+            plAIt needs your camera to read the menu in front of you — or upload a photo instead.
+          </Subtitle>
+          <PrimaryButton label="Allow camera" onPress={requestPermission} />
+          <PrimaryButton label="🖼  Upload a photo" variant="teal" onPress={pickFromLibrary} />
+        </View>
       </SafeAreaView>
     );
   }
@@ -153,9 +250,6 @@ export default function CameraScreen() {
   if (shot) {
     return (
       <SafeAreaView style={styles.safe}>
-        <View style={styles.previewTop}>
-          <NavLink label="‹ Back" onPress={() => router.back()} />
-        </View>
         <Image source={{ uri: shot.uri }} style={styles.preview} contentFit="cover" />
         {error && <Body style={styles.error}>{error}</Body>}
         <View style={styles.controls}>
@@ -179,7 +273,7 @@ export default function CameraScreen() {
       <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
       <SafeAreaView style={styles.overlay}>
         <View style={styles.overlayTop}>
-          <NavLink label="‹ Back" onPress={() => router.back()} style={styles.backOnDark} />
+          <CornerMenu dark />
         </View>
         <View style={styles.spacer} />
         <Body style={styles.hint}>Frame the whole menu, then tap to capture</Body>
@@ -208,6 +302,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Plait.color.background,
     padding: Plait.space.lg,
+  },
+  gateTop: { flexDirection: 'row', justifyContent: 'flex-end' },
+  gateBody: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     gap: Plait.space.md,
@@ -219,20 +317,11 @@ const styles = StyleSheet.create({
     gap: Plait.space.md,
   },
   overlayTop: {
-    alignSelf: 'flex-start',
+    alignSelf: 'flex-end',
     paddingTop: Plait.space.sm,
-    paddingLeft: Plait.space.lg,
-  },
-  backOnDark: {
-    color: '#fff',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: Plait.radius.pill,
-    overflow: 'hidden',
+    paddingRight: Plait.space.lg,
   },
   spacer: { flex: 1 },
-  previewTop: { paddingBottom: Plait.space.sm },
   hint: {
     color: '#fff',
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -276,4 +365,54 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: Plait.space.sm,
   },
+});
+
+const menu = StyleSheet.create({
+  button: {
+    width: 40,
+    height: 40,
+    borderRadius: Plait.radius.pill,
+    backgroundColor: Plait.color.card,
+    borderWidth: 1,
+    borderColor: Plait.color.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonDark: { backgroundColor: 'rgba(0,0,0,0.5)', borderColor: 'transparent' },
+  buttonIcon: { color: Plait.color.ink, fontSize: 16 },
+  buttonIconDark: { color: '#FFFFFF' },
+
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(27,30,27,0.35)',
+    paddingTop: 64,
+    paddingHorizontal: Plait.space.md,
+  },
+  sheet: {
+    backgroundColor: Plait.color.paper,
+    borderRadius: Plait.radius.lg,
+    padding: Plait.space.md,
+    gap: 4,
+    shadowColor: Plait.color.ink,
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 8,
+  },
+  head: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Plait.color.line,
+    marginBottom: 6,
+  },
+  logo: { fontFamily: Plait.font.display, fontSize: 24, color: Plait.color.ink },
+  version: { fontFamily: Plait.font.mono, fontSize: 11, color: Plait.color.inkFaint },
+  row: { flexDirection: 'row', alignItems: 'center', gap: Plait.space.sm, paddingVertical: 11 },
+  rowIcon: { fontSize: 17, width: 26, textAlign: 'center' },
+  rowLabel: { fontFamily: Plait.font.bodySemiBold, fontSize: 15, color: Plait.color.ink },
+  rowSub: { fontFamily: Plait.font.body, fontSize: 12, color: Plait.color.inkSoft, marginTop: 1 },
+  rowChevron: { fontFamily: Plait.font.body, fontSize: 18, color: Plait.color.inkFaint },
 });

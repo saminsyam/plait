@@ -1,17 +1,20 @@
 /**
  * Picks screen — Sushi 2.1 (v2 spec, June 2026).
  *
- * Hierarchy per spec: header + gate line, then ONE hero card ("Our pick for
+ * One decision per screen: header + gate line, ONE hero card ("Our pick for
  * you") with hold-to-lock, two compact contenders, a detail sheet, and a
- * persistent tune-chip row. The "Adventurous?" toggle flips one contender into
- * a deterministic stretch pick (dashed plum, zero tokens, allowed-only).
+ * persistent tune-chip row. Everything else is a single quiet line — trust
+ * notes, the refine offer, crowd favorites — or lives in the detail sheet.
+ * The "Adventurous?" toggle flips one contender into a deterministic stretch
+ * pick (dashed plum, zero tokens, allowed-only).
  *
  * All v1 engine behavior is preserved: instant rank off the scan, quick-tune
- * chips + budget ceiling pre-trim the gated pool on-device before ONE re-rank
- * call, dish detail is lazily fetched and cached, and blocked items live
- * behind the gate line's "view" — never silently dropped, never re-ranked.
+ * chips + budget ceiling (behind the $ chip) pre-trim the gated pool on-device
+ * before ONE re-rank call, dish detail is lazily fetched and cached, crowd
+ * favorites still feed the ranking context and the card badge, and blocked
+ * items live behind the gate line's "view" — never silently dropped.
  */
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
@@ -32,8 +35,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BudgetSlider } from '@/components/budget-slider';
 import { HoldToLock } from '@/components/hold-to-lock';
 import { MatchRing } from '@/components/match-ring';
-import { RestaurantSummary } from '@/components/restaurant-summary';
-import { Body, Eyebrow, Loading, PrimaryButton } from '@/components/ui-kit';
+import type { CrowdFavoritesState } from '@/components/restaurant-summary';
+import { Body, Eyebrow, PrimaryButton } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { useCrowdFavorites } from '@/hooks/use-crowd-favorites';
 import { useProgressSteps, type ProgressStep } from '@/hooks/use-progress-steps';
@@ -226,6 +229,7 @@ export default function ResultsScreen() {
   } = session;
   const { crowdState, crowdReady } = useCrowdFavorites();
 
+
   // Detail sheet state — one dish at a time, detail lazily fetched + cached.
   const [sheet, setSheet] = useState<DisplayEntry | null>(null);
   const [detail, setDetail] = useState<DishDetail | null>(null);
@@ -250,10 +254,12 @@ export default function ResultsScreen() {
   const [budget, setBudget] = useState<number | null>(null);
   const rankStarted = useRef(false);
 
-  // ── v2 picks-screen state: mode toggle, hold-to-lock, gate-line view.
+  // ── v2 picks-screen state: mode toggle, hold-to-lock, gate-line view,
+  // and the budget panel folded behind the $ chip in the tune bar.
   const [adventurous, setAdventurous] = useState(false);
   const [locked, setLocked] = useState(false);
   const [gateOpen, setGateOpen] = useState(false);
+  const [budgetOpen, setBudgetOpen] = useState(false);
 
   const runRank = useCallback(
     async (tuneIds: QuickTuneId[], ceiling: number | null) => {
@@ -322,15 +328,9 @@ export default function ResultsScreen() {
     void runRank(tunes, ceiling);
   };
 
-  const [nudgeDismissed, setNudgeDismissed] = useState(false);
-
-
-  // Guard: no scan in progress → home.
-  useEffect(() => {
-    if (!hasScan) router.replace('/');
-  }, [hasScan, router]);
-
-  if (!hasScan) return <Loading message="Loading…" />;
+  // Guard: no scan in progress → home. <Redirect> (not router.replace in an
+  // effect) is safe on a cold web load, before the root navigator mounts.
+  if (!hasScan) return <Redirect href="/" />;
 
   const byId = new Map(items.map((i) => [i.id, i]));
 
@@ -353,6 +353,13 @@ export default function ResultsScreen() {
     if (flag === 'spicier_than_stated') return 'spice';
     if (crowdFavorites[id]) return 'crowd';
     return null;
+  };
+
+  /** Reviewer blurb for a dish, when the loaded crowd favorites include it. */
+  const crowdBlurbFor = (item: MenuItem): string | null => {
+    const name = crowdFavorites[item.id];
+    if (!name || crowdState.kind !== 'loaded') return null;
+    return crowdState.favorites.find((f) => f.name === name)?.blurb || null;
   };
 
   /** Everything the amber "ask staff" block should say for one dish. */
@@ -423,22 +430,20 @@ export default function ResultsScreen() {
 
   // hasScan guarantees menuContext from here down.
   const o = menuContext!.orientation;
-  const signatures = o.signature_item_ids
-    .map((id) => byId.get(id)?.name)
-    .filter((n): n is string => !!n);
   const cuisine =
     menuContext!.cuisine_type && menuContext!.cuisine_type !== 'unknown'
       ? menuContext!.cuisine_type
       : null;
   const restaurantName = menuContext!.restaurant_name.trim();
 
-  // Refinement availability + the deterministic "would questions help?" nudge.
+  // Refinement availability + the deterministic "would questions help?" nudge
+  // (the nudge text, when present, becomes the refine link's label).
   const trimmedPool = filterBySpice(candidates, spiceCeiling);
-  // Budget slider range from the spice-trimmed pool's prices (null = no slider).
+  // Budget range from the spice-trimmed pool's prices (null = no $ chip).
   const priceBounds = budgetBounds(trimmedPool);
   const refinable = picks.length > 0 && nextQuestion(trimmedPool, new Set()) !== null;
   const nudge =
-    refinable && picksSource === 'instant' && !nudgeDismissed && rankState !== 'running'
+    refinable && picksSource === 'instant' && rankState !== 'running'
       ? refineNudge({
           poolSize: trimmedPool.length,
           preferencesText: preferences ?? '',
@@ -475,13 +480,21 @@ export default function ResultsScreen() {
     setGateOpen((g) => !g);
   };
 
+  const toggleBudget = () => {
+    if (!reduceMotion) LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setBudgetOpen((b) => !b);
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
         {/* ── Header: eyebrow + restaurant name + mode toggle */}
         <View style={styles.head}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Eyebrow>scanned · {items.length} {items.length === 1 ? 'dish' : 'dishes'}</Eyebrow>
+            <Eyebrow>
+              scanned{cuisine ? ` · ${cuisine}` : ''} · {items.length}{' '}
+              {items.length === 1 ? 'dish' : 'dishes'}
+            </Eyebrow>
             <Text style={styles.restaurant} numberOfLines={2}>
               {restaurantName || 'Here’s the place'}
             </Text>
@@ -520,48 +533,14 @@ export default function ResultsScreen() {
           </View>
         )}
 
-        {/* The 10-second restaurant read, shared with the lookup page. */}
-        <RestaurantSummary
-          mode="scan"
-          cuisine={cuisine}
-          summary={o.summary}
-          knownFor={o.known_for}
-          crowdFavorites={crowdState}
-          menuHighlights={signatures}
-        />
-
-        {/* Restaurant-level trust signal (halal/kosher certification) */}
-        {trustNotes.length > 0 && (
-          <View style={styles.trustBanner}>
-            {trustNotes.map((note, i) => (
-              <Text key={i} style={styles.trustText}>✓ Restaurant note: “{note}”</Text>
-            ))}
+        {/* Restaurant-level trust signal (halal/kosher certification) — one
+            quiet line per note, same register as the gate line. */}
+        {trustNotes.map((note, i) => (
+          <View key={i} style={styles.gateLine}>
+            <Text style={styles.trustCheck}>✓</Text>
+            <Text style={styles.gateText} numberOfLines={2}>{note}</Text>
           </View>
-        )}
-
-        {/* Deterministic nudge — shown only when refinement would plausibly
-            sharpen the instant picks; one tap to refine, ✕ to dismiss. */}
-        {nudge && (
-          <View style={styles.nudgeRow}>
-            <Pressable style={{ flex: 1 }} onPress={() => router.push('/questions')} hitSlop={6}>
-              <Text style={styles.nudgeText}>💡 {nudge}</Text>
-            </Pressable>
-            <Pressable onPress={() => setNudgeDismissed(true)} hitSlop={10}>
-              <Text style={styles.nudgeClose}>✕</Text>
-            </Pressable>
-          </View>
-        )}
-
-        {/* Budget slider — range derived from THIS menu's prices; commit on
-            release → deterministic pool trim + one re-rank (like the chips). */}
-        {priceBounds && picksSource !== null && (
-          <BudgetSlider
-            bounds={priceBounds}
-            value={budget}
-            disabled={rankState === 'running'}
-            onCommit={commitBudget}
-          />
-        )}
+        ))}
 
         {candidates.length === 0 && (
           <Body style={styles.emptyPicks}>
@@ -612,41 +591,72 @@ export default function ResultsScreen() {
           </View>
         )}
 
-        {/* The narrowing flow, demoted to an optional refinement — hidden when
-            no facet could split the (spice-trimmed) pool anyway. */}
+        {/* The narrowing flow, demoted to one quiet offer — the deterministic
+            nudge supplies the label when it fires; hidden when no facet could
+            split the (spice-trimmed) pool anyway. */}
         {refinable && rankState !== 'running' && (
-          <PrimaryButton
-            label="Not quite? Refine my picks"
-            variant="teal"
-            onPress={() => router.push('/questions')}
-          />
+          <Pressable onPress={() => router.push('/questions')} hitSlop={8}>
+            <Text style={styles.refineLink}>{nudge ?? 'Not quite? Refine my picks'} →</Text>
+          </Pressable>
         )}
+
+        {/* Crowd favorites, compressed to one honest line. Loaded names still
+            feed the ranking context + card badges; blurbs live in the sheet. */}
+        <CrowdLine state={crowdState} />
 
         <PrimaryButton label="Scan another menu" variant="ghost" onPress={scanAnother} />
         <UsageLine />
       </ScrollView>
 
       {/* ── Persistent tune chips — deterministic re-deals, zero tokens until
-          the single re-rank call. */}
+          the single re-rank call. The $ chip unfolds the menu-priced budget
+          slider; everything else on the screen stays put. */}
       {candidates.length > 1 && picksSource !== null && (
         <View style={styles.tuneBar}>
-          {QUICK_TUNES.map((t) => {
-            const on = tunes.includes(t.id);
-            return (
+          {budgetOpen && priceBounds && (
+            <BudgetSlider
+              bounds={priceBounds}
+              value={budget}
+              disabled={rankState === 'running'}
+              onCommit={commitBudget}
+            />
+          )}
+          <View style={styles.tuneRow}>
+            {priceBounds && (
               <Pressable
-                key={t.id}
-                onPress={() => toggleTune(t.id)}
+                onPress={toggleBudget}
                 style={[
                   styles.tuneChip,
-                  on && styles.tuneChipActive,
+                  styles.tuneChipBudget,
+                  budgetOpen && styles.tuneChipOpen,
+                  budget !== null && styles.tuneChipActive,
                   rankState === 'running' && { opacity: 0.4 },
                 ]}>
-                <Text style={[styles.tuneChipText, on && styles.tuneChipTextActive]} numberOfLines={1}>
-                  {t.label}
+                <Text
+                  style={[styles.tuneChipText, budget !== null && styles.tuneChipTextActive]}
+                  numberOfLines={1}>
+                  {budget !== null ? `≤ $${budget}` : '💸 $'}
                 </Text>
               </Pressable>
-            );
-          })}
+            )}
+            {QUICK_TUNES.map((t) => {
+              const on = tunes.includes(t.id);
+              return (
+                <Pressable
+                  key={t.id}
+                  onPress={() => toggleTune(t.id)}
+                  style={[
+                    styles.tuneChip,
+                    on && styles.tuneChipActive,
+                    rankState === 'running' && { opacity: 0.4 },
+                  ]}>
+                  <Text style={[styles.tuneChipText, on && styles.tuneChipTextActive]} numberOfLines={1}>
+                    {t.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
       )}
 
@@ -744,6 +754,15 @@ export default function ResultsScreen() {
                       </>
                     )}
                   </>
+                )}
+
+                {crowdBlurbFor(sheet.item) && (
+                  <View style={styles.crowdBlock}>
+                    <Eyebrow style={{ color: Plait.color.green, marginBottom: 4 }}>
+                      crowd favorite · from web reviews
+                    </Eyebrow>
+                    <Text style={styles.crowdBlurb}>“{crowdBlurbFor(sheet.item)}”</Text>
+                  </View>
                 )}
 
                 {askStaff(sheet).length > 0 && (
@@ -888,6 +907,41 @@ function RankStatus({ steps }: { steps: ProgressStep[] }) {
   );
 }
 
+/**
+ * Crowd favorites, compressed from the v1 tile to one honest line. The offer
+ * keeps its price tag; loading shows the REAL latest pipeline status; loaded
+ * lists the reviewer-cited names (⚠️ = conflicts with your hard constraints);
+ * a dry search says so instead of inventing reviews.
+ */
+function CrowdLine({ state }: { state: CrowdFavoritesState }) {
+  if (state.kind === 'hidden') return null;
+  if (state.kind === 'offer') {
+    return (
+      <Pressable onPress={state.onFetch} hitSlop={8}>
+        <Text style={styles.crowdLine}>
+          <Text style={styles.crowdLink}>★ See what reviewers order</Text> · one search · ~$0.02
+        </Text>
+      </Pressable>
+    );
+  }
+  if (state.kind === 'loading') {
+    return <Text style={styles.crowdLine}>★ {state.statusLine ?? 'Searching reviews…'}</Text>;
+  }
+  if (state.kind === 'empty') {
+    return (
+      <Text style={styles.crowdLine}>
+        ★ {state.message ?? 'No reviews found for this place — nothing to cite.'}
+      </Text>
+    );
+  }
+  const names = state.favorites.map((f) => (f.warning ? `⚠️ ${f.name}` : f.name));
+  return (
+    <Text style={styles.crowdLine} numberOfLines={2}>
+      ★ Reviewers love: {names.join(', ')} · from web reviews
+    </Text>
+  );
+}
+
 /** Dim one-liner with the app-session API spend — taps through to /stats. */
 function UsageLine() {
   const router = useRouter();
@@ -947,20 +1001,24 @@ const styles = StyleSheet.create({
   gateName: { fontFamily: Plait.font.bodySemiBold, fontSize: 14, color: Plait.color.ink },
   gateReason: { fontFamily: Plait.font.body, fontSize: 12.5, lineHeight: 17, color: Plait.color.inkSoft },
 
-  // Trust banner
-  trustBanner: {
-    backgroundColor: Plait.color.greenSoft,
-    borderRadius: Plait.radius.sm,
-    paddingVertical: 10,
-    paddingHorizontal: Plait.space.sm,
-    gap: 4,
-  },
-  trustText: {
-    color: Plait.color.green,
-    fontSize: 13,
+  // Quiet lines (trust note · refine offer · crowd favorites)
+  trustCheck: { color: Plait.color.green, fontSize: 12, fontFamily: Plait.font.bodyBold },
+  refineLink: {
+    textAlign: 'center',
     fontFamily: Plait.font.bodySemiBold,
-    lineHeight: 18,
+    fontSize: 13,
+    color: Plait.color.green,
+    paddingVertical: 4,
   },
+  crowdLine: {
+    textAlign: 'center',
+    fontFamily: Plait.font.body,
+    fontSize: 12,
+    lineHeight: 17,
+    color: Plait.color.inkSoft,
+    paddingVertical: 2,
+  },
+  crowdLink: { fontFamily: Plait.font.bodySemiBold, color: Plait.color.green },
 
   // Deal
   deal: { gap: 10 },
@@ -1044,6 +1102,14 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: 12,
   },
+  crowdBlock: {
+    marginTop: 16,
+    backgroundColor: Plait.color.greenSoft,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  crowdBlurb: { fontFamily: Plait.font.body, fontSize: 13, lineHeight: 19, color: Plait.color.ink },
   askBlock: {
     marginTop: 16,
     backgroundColor: Plait.color.amberSoft,
@@ -1069,10 +1135,9 @@ const styles = StyleSheet.create({
   rankRow: { flex: 1, color: Plait.color.ink, fontSize: 13.5, fontFamily: Plait.font.body },
   rankTime: { color: Plait.color.inkSoft, fontSize: 12, fontFamily: Plait.font.mono },
 
-  // Tune chips (persistent bottom row)
+  // Tune chips (persistent bottom row; budget slider unfolds above the chips)
   tuneBar: {
-    flexDirection: 'row',
-    gap: 8,
+    gap: 10,
     paddingHorizontal: Plait.space.md,
     paddingTop: 10,
     paddingBottom: Plait.space.md,
@@ -1080,6 +1145,9 @@ const styles = StyleSheet.create({
     borderTopColor: Plait.color.line,
     backgroundColor: Plait.color.paper,
   },
+  tuneRow: { flexDirection: 'row', gap: 8 },
+  tuneChipBudget: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', paddingHorizontal: 14 },
+  tuneChipOpen: { borderColor: Plait.color.green },
   tuneChip: {
     flex: 1,
     alignItems: 'center',
@@ -1093,19 +1161,6 @@ const styles = StyleSheet.create({
   tuneChipActive: { backgroundColor: Plait.color.green, borderColor: Plait.color.green },
   tuneChipText: { color: Plait.color.inkSoft, fontSize: 12, fontFamily: Plait.font.bodySemiBold },
   tuneChipTextActive: { color: '#FFFFFF' },
-
-  // Nudge
-  nudgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Plait.space.sm,
-    backgroundColor: Plait.color.greenSoft,
-    borderRadius: Plait.radius.sm,
-    paddingVertical: 10,
-    paddingHorizontal: Plait.space.sm,
-  },
-  nudgeText: { color: Plait.color.green, fontSize: 13, fontFamily: Plait.font.bodySemiBold, lineHeight: 18 },
-  nudgeClose: { color: Plait.color.inkSoft, fontSize: 14, fontFamily: Plait.font.bodyBold },
 
   emptyPicks: { color: Plait.color.inkSoft, fontSize: 14, lineHeight: 20 },
   usageLine: {

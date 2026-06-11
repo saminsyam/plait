@@ -103,7 +103,7 @@ export default function PreferencesScreen() {
             disabled={!canContinue}
           />
           {!isEditing && (
-            <Text style={styles.hint}>You can change this anytime from the home screen.</Text>
+            <Text style={styles.hint}>You can change this anytime from the ☰ menu on the camera.</Text>
           )}
         </View>
       </KeyboardAvoidingView>
