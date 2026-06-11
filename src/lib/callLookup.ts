@@ -74,12 +74,33 @@ const NOT_FOUND: LookupResult = {
 const LOOKUP_SYSTEM_PROMPT = `You are a menu extraction agent for plAIt, a dietary recommendation app.
 Your job: find and extract the full menu for a restaurant, given its name and optionally a city, using the web_search tool.
 
+STEP 0 — KNOWN MENU URL (skip searching when possible)
+If the user message includes a "Known menu page" URL, web_fetch that URL FIRST
+without any web_search. If it yields real dishes, extract them and skip STEP 1
+entirely. If it is a homepage or has no dishes but its content contains a menu
+link, fetch THAT link next (it appeared in the fetched content, so it is
+allowed). Only fall back to STEP 1 if the fetches fail or yield no dishes.
+
 STEP 1 — FIND THE MENU
 Search with a query like "[restaurant] [city] menu". Prefer, in order:
 1. The restaurant's own website (most current)
 2. Aggregators (singleplatform.com, zmenu.com, menupix.com)
 3. Yelp / TripAdvisor menu pages
-Read the search results carefully and extract as many real dishes (with prices when shown) as you can. Search again with an aggregator-targeted query if the first results are thin.
+
+Extract as many real dishes (with prices when shown) as you can from the search
+result snippets. Search again with an aggregator-targeted query if the first
+results are thin.
+
+ONLY IF the snippets yield fewer than ~15 dishes, use the web_fetch tool to read
+the single best menu page (the restaurant's own menu page or PDF menu). Rules:
+- Fetch AT MOST ONE page. Skip the fetch entirely when snippets already gave a
+  good menu — fetching costs tokens.
+- Only fetch a URL that appears VERBATIM in the search results — never construct
+  or guess a URL (constructed URLs are rejected by the fetch tool).
+- Do NOT fetch order-online platforms (toasttab, doordash, ubereats, grubhub):
+  their pages are JavaScript-rendered and return nothing useful.
+- A failed or empty fetch is NOT a failed lookup — fall back to the snippets,
+  and return found:true whenever you extracted real dishes from ANY source.
 
 STEP 2 — HANDLE EDGE CASES
 - Multiple locations for the same name → set needs_location_confirm: true and list them in locations_found (as short "City, Address" strings). Do NOT guess.
@@ -117,7 +138,9 @@ type MessagesResponse = {
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
-    server_tool_use?: { web_search_requests?: number };
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+    server_tool_use?: { web_search_requests?: number; web_fetch_requests?: number };
   };
 };
 
@@ -125,7 +148,13 @@ type MessagesResponse = {
 export async function callLookup(
   restaurant: string,
   city: string,
-  onProgress?: OnProgress
+  onProgress?: OnProgress,
+  /**
+   * Menu-page URL already discovered by an earlier search (e.g. the reviews
+   * lookup). Passing it lets the model fetch the page directly instead of
+   * re-searching for the restaurant — usually zero web searches.
+   */
+  menuUrl?: string | null
 ): Promise<LookupResult> {
   if (!ANTHROPIC_API_KEY) throw new MissingKeyError();
 
@@ -136,7 +165,9 @@ export async function callLookup(
     detail: `“${restaurant}${city ? `, ${city}` : ''}”`,
     status: 'active',
   });
-  const userText = `Find the menu for: ${restaurant}${city ? `, ${city}` : ''}`;
+  const userText =
+    `Find the menu for: ${restaurant}${city ? `, ${city}` : ''}` +
+    (menuUrl ? `\nKnown menu page: ${menuUrl}` : '');
   // The server runs the search loop; it can return pause_turn if it needs more
   // iterations. Re-send the accumulated turn to resume, capped to avoid loops.
   const messages: { role: 'user' | 'assistant'; content: unknown }[] = [
@@ -146,7 +177,10 @@ export async function callLookup(
   const t0 = Date.now();
   let usageIn = 0;
   let usageOut = 0;
+  let cacheWrite = 0;
+  let cacheRead = 0;
   let searches = 0;
+  let fetches = 0;
   let final: MessagesResponse | null = null;
 
   for (let i = 0; i < 4; i++) {
@@ -165,7 +199,20 @@ export async function callLookup(
         max_tokens: 8000,
         system: LOOKUP_SYSTEM_PROMPT,
         messages,
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 4 }],
+        tools: [
+          { type: 'web_search_20250305', name: 'web_search', max_uses: 4 },
+          {
+            // Read the actual menu page instead of working from snippets.
+            // Free beyond tokens; max_content_tokens caps runaway pages.
+            type: 'web_fetch_20250910',
+            name: 'web_fetch',
+            // With a known URL we allow one extra hop (homepage → its menu link).
+            max_uses: menuUrl ? 2 : 1,
+            max_content_tokens: 8000,
+            // JS-rendered ordering platforms return nothing useful to fetch.
+            blocked_domains: ['toasttab.com', 'doordash.com', 'ubereats.com', 'grubhub.com', 'seamless.com'],
+          },
+        ],
       }),
     });
 
@@ -177,10 +224,19 @@ export async function callLookup(
     const json = (await res.json()) as MessagesResponse;
     usageIn += json.usage?.input_tokens ?? 0;
     usageOut += json.usage?.output_tokens ?? 0;
+    cacheWrite += json.usage?.cache_creation_input_tokens ?? 0;
+    cacheRead += json.usage?.cache_read_input_tokens ?? 0;
     searches += json.usage?.server_tool_use?.web_search_requests ?? 0;
+    fetches += json.usage?.server_tool_use?.web_fetch_requests ?? 0;
 
     if (json.stop_reason === 'pause_turn' && json.content) {
-      messages.push({ role: 'assistant', content: json.content });
+      // Cache the accumulated turn so each pause_turn resume re-reads the
+      // search/fetch results at ~0.1× instead of reprocessing them in full.
+      // (Loop is capped at 4 iterations, so we stay under the 4-breakpoint max.)
+      const blocks = [...json.content];
+      const last = blocks[blocks.length - 1];
+      blocks[blocks.length - 1] = { ...last, cache_control: { type: 'ephemeral' } } as ContentBlock;
+      messages.push({ role: 'assistant', content: blocks });
       onProgress?.({
         id: 'search',
         icon: '🔎',
@@ -197,7 +253,8 @@ export async function callLookup(
   const result = final ? parseLookupJson(final) : NOT_FOUND;
   console.log(
     `[Lookup] ${Date.now() - t0}ms in=${usageIn} out=${usageOut} ` +
-      `web_searches=${searches} found=${result.found} items=${result.items.length}`
+      `cache(r=${cacheRead} w=${cacheWrite}) web_searches=${searches} ` +
+      `web_fetches=${fetches} found=${result.found} items=${result.items.length}`
   );
   recordUsage({
     label: 'lookup.search',
@@ -205,6 +262,8 @@ export async function callLookup(
     inputTokens: usageIn,
     outputTokens: usageOut,
     webSearches: searches,
+    cacheWriteTokens: cacheWrite,
+    cacheReadTokens: cacheRead,
   });
   onProgress?.({
     id: 'search',

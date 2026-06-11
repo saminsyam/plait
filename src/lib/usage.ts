@@ -55,13 +55,23 @@ export function recordUsage(input: {
   inputTokens?: number;
   outputTokens?: number;
   webSearches?: number;
+  /** Prompt-cache tokens: writes cost 1.25× input, reads 0.1× input. */
+  cacheWriteTokens?: number;
+  cacheReadTokens?: number;
 }): UsageEntry {
   const p = pricingFor(input.model);
-  const inputTokens = input.inputTokens ?? 0;
+  const uncachedTokens = input.inputTokens ?? 0;
+  const cacheWriteTokens = input.cacheWriteTokens ?? 0;
+  const cacheReadTokens = input.cacheReadTokens ?? 0;
+  // Fold cache tokens into the input total so the stats screen stays honest
+  // about volume; the cost split below prices each tier correctly.
+  const inputTokens = uncachedTokens + cacheWriteTokens + cacheReadTokens;
   const outputTokens = input.outputTokens ?? 0;
   const webSearches = input.webSearches ?? 0;
   const costUsd =
-    (inputTokens / 1_000_000) * p.inputPerMTok +
+    (uncachedTokens / 1_000_000) * p.inputPerMTok +
+    (cacheWriteTokens / 1_000_000) * p.inputPerMTok * 1.25 +
+    (cacheReadTokens / 1_000_000) * p.inputPerMTok * 0.1 +
     (outputTokens / 1_000_000) * p.outputPerMTok +
     webSearches * WEB_SEARCH_PER_CALL;
 
@@ -79,6 +89,9 @@ export function recordUsage(input: {
   const totals = getUsage().totals;
   console.log(
     `[Usage] ${entry.label} in=${inputTokens} out=${outputTokens}` +
+      (cacheReadTokens > 0 || cacheWriteTokens > 0
+        ? ` (cache r=${cacheReadTokens} w=${cacheWriteTokens})`
+        : '') +
       (webSearches > 0 ? ` searches=${webSearches}` : '') +
       ` cost=${formatUsd(costUsd)} | session: ${totals.calls} calls ${formatUsd(totals.costUsd)}`
   );

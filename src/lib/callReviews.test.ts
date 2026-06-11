@@ -26,7 +26,19 @@ const FOUND: ReviewsResult = {
     { name: 'Tea Leaf Salad', blurb: 'Reviewers call it a must-order.' },
     { name: 'Coconut Chicken Noodle Soup', blurb: 'Praised for the rich broth.' },
   ],
+  menu_url: null,
 };
+
+test('normalizeReviews keeps a valid menu_url and drops junk', () => {
+  const base = { found: true, crowd_favorites: [{ name: 'Mohinga', blurb: '' }] };
+  assert.equal(
+    normalizeReviews({ ...base, menu_url: ' https://example.com/menu ' }).menu_url,
+    'https://example.com/menu'
+  );
+  assert.equal(normalizeReviews({ ...base, menu_url: 'example.com/menu' }).menu_url, null);
+  assert.equal(normalizeReviews({ ...base, menu_url: null }).menu_url, null);
+  assert.equal(normalizeReviews(base).menu_url, null); // pre-upgrade cache records
+});
 
 const record = (at: number, result: ReviewsResult = FOUND) => JSON.stringify({ at, result });
 

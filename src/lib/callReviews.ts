@@ -43,9 +43,20 @@ export type ReviewsResult = {
   /** One-line description of the place, from review snippets. */
   restaurant_blurb: string;
   crowd_favorites: CrowdFavorite[];
+  /**
+   * Best menu-page URL seen verbatim in the search results (restaurant's own
+   * site preferred), or null. Piggybacks on the same single search so the
+   * "get the menu online" step can fetch it directly instead of re-searching.
+   */
+  menu_url: string | null;
 };
 
-const NOT_FOUND: ReviewsResult = { found: false, restaurant_blurb: '', crowd_favorites: [] };
+const NOT_FOUND: ReviewsResult = {
+  found: false,
+  restaurant_blurb: '',
+  crowd_favorites: [],
+  menu_url: null,
+};
 
 // ---------------------------------------------------------------------------
 // Cache — AsyncStorage, normalized-name key, 14-day TTL
@@ -115,10 +126,12 @@ export function normalizeReviews(raw: unknown): ReviewsResult {
       blurb: typeof f.blurb === 'string' ? f.blurb.trim() : '',
     }));
   if (favorites.length === 0) return { ...NOT_FOUND };
+  const menuUrl = typeof o.menu_url === 'string' ? o.menu_url.trim() : '';
   return {
     found: true,
     restaurant_blurb: typeof o.restaurant_blurb === 'string' ? o.restaurant_blurb.trim() : '',
     crowd_favorites: favorites,
+    menu_url: /^https?:\/\/\S+$/.test(menuUrl) ? menuUrl : null,
   };
 }
 
@@ -213,11 +226,16 @@ RULES
   many reviews).
 - Per dish: "name" + "blurb" (one short line on why people like it).
 - "restaurant_blurb": one line on what the place is, from the snippets.
+- "menu_url": the most menu-likely URL that appears VERBATIM in the results —
+  best: the restaurant's own menu page or PDF menu; acceptable: the
+  restaurant's own homepage; never order-online platforms (toasttab,
+  doordash, ubereats, grubhub) or review sites. null when none appears.
+  Never construct or guess a URL.
 - Only output {"found":false} when the snippets are about the wrong place or
   name no dishes at all.
 
 OUTPUT: raw COMPACT JSON only — no markdown, no preamble, no extra keys:
-{"found":true,"restaurant_blurb":"...","crowd_favorites":[{"name":"...","blurb":"..."}]}
+{"found":true,"restaurant_blurb":"...","crowd_favorites":[{"name":"...","blurb":"..."}],"menu_url":"https://..." or null}
 or {"found":false}`;
 
 type ContentBlock = { type: string; text?: string };
