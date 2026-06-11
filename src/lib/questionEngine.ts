@@ -29,6 +29,16 @@ export const SPICE_LEVELS: { level: SpiceLevel; label: string; emoji: string; hi
 export const DEFAULT_SPICE: SpiceLevel = 2;
 
 /**
+ * Parse a persisted spice ceiling (AsyncStorage string). Absent values, old
+ * 1–5-scale levels out of range, and garbage all fall back to DEFAULT_SPICE —
+ * never trust storage shapes from older installs.
+ */
+export function parseSpiceCeiling(raw: string | null | undefined): SpiceLevel {
+  const n = Number(raw);
+  return n === 1 || n === 2 || n === 3 ? (n as SpiceLevel) : DEFAULT_SPICE;
+}
+
+/**
  * Dishes carry a 0–5 spice_level from the enrichment model; the user picks one
  * of three tolerances. Map tolerance → the hottest dish heat we'll keep:
  * mild admits only barely-spiced food, medium cuts the genuinely fiery end,

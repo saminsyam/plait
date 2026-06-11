@@ -16,6 +16,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import type { HardConstraints } from '@/lib/dietaryFilter';
+import { DEFAULT_SPICE, parseSpiceCeiling, type SpiceLevel } from '@/lib/questionEngine';
 
 const K = {
   tdeeCompleted: 'tdee_completed',
@@ -29,6 +30,9 @@ const K = {
   // rules) smart-parsed from the free-text preferences. These feed the
   // deterministic dietary hard-gate — the model never enforces safety.
   hardConstraints: 'hard_constraints',
+  // Spice is the one constant preference, so it's asked once here instead of
+  // per scan. Pre-trims every ranking pool (instant and refine).
+  spiceCeiling: 'spice_ceiling',
 } as const;
 
 /** Daily macro/calorie targets, computed on-device from the TDEE calculator. */
@@ -52,12 +56,16 @@ type ProfileValue = {
   preferences: string | null;
   /** Structured hard constraints for the deterministic gate. Defaults to []. */
   hardConstraints: HardConstraints;
+  /** Usual heat ceiling (1 mild · 2 medium · 3 hot). Defaults to medium. */
+  spiceCeiling: SpiceLevel;
   /** Persist TDEE goals (or null when the user skips) and mark the step done. */
   completeTdee: (goals: TdeeGoals | null) => Promise<void>;
   /** Persist preferences text and mark the step done. */
   savePreferences: (text: string) => Promise<void>;
   /** Persist the structured hard constraints (smart-parsed from the text). */
   saveHardConstraints: (constraints: HardConstraints) => Promise<void>;
+  /** Persist the spice ceiling. */
+  saveSpiceCeiling: (level: SpiceLevel) => Promise<void>;
 };
 
 const ProfileContext = createContext<ProfileValue | null>(null);
@@ -69,6 +77,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const [prefsCompleted, setPrefsCompleted] = useState(false);
   const [preferences, setPreferences] = useState<string | null>(null);
   const [hardConstraints, setHardConstraints] = useState<HardConstraints>([]);
+  const [spiceCeiling, setSpiceCeiling] = useState<SpiceLevel>(DEFAULT_SPICE);
 
   useEffect(() => {
     let active = true;
@@ -83,6 +92,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
           K.prefsCompleted,
           K.preferences,
           K.hardConstraints,
+          K.spiceCeiling,
         ]);
         if (!active) return;
         const map = Object.fromEntries(entries) as Record<string, string | null>;
@@ -99,6 +109,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         setPrefsCompleted(map[K.prefsCompleted] === 'true');
         if (map[K.preferences]) setPreferences(map[K.preferences]);
         setHardConstraints(parseHardConstraints(map[K.hardConstraints]));
+        setSpiceCeiling(parseSpiceCeiling(map[K.spiceCeiling]));
       } catch {
         // First launch / unreadable storage — fall through to defaults.
       } finally {
@@ -143,6 +154,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     await AsyncStorage.setItem(K.hardConstraints, JSON.stringify(constraints));
   }, []);
 
+  const saveSpiceCeiling = useCallback(async (level: SpiceLevel) => {
+    setSpiceCeiling(level);
+    await AsyncStorage.setItem(K.spiceCeiling, String(level));
+  }, []);
+
   const value = useMemo<ProfileValue>(
     () => ({
       loaded,
@@ -151,9 +167,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       prefsCompleted,
       preferences,
       hardConstraints,
+      spiceCeiling,
       completeTdee,
       savePreferences,
       saveHardConstraints,
+      saveSpiceCeiling,
     }),
     [
       loaded,
@@ -162,9 +180,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       prefsCompleted,
       preferences,
       hardConstraints,
+      spiceCeiling,
       completeTdee,
       savePreferences,
       saveHardConstraints,
+      saveSpiceCeiling,
     ]
   );
 

@@ -1,10 +1,11 @@
 /**
  * Optional refinement (reached from the results screen's "Refine my picks").
- * The deterministic engine drives this entirely on-device: a constant 3-way
- * spice selector, then a short series of binary questions, each chosen for
- * maximum information gain against the REMAINING candidates. When the pool is
- * small enough, reasoning re-runs over just that handful and the refined picks
- * replace the instant ones back on results.
+ * The deterministic engine drives this entirely on-device: a short series of
+ * binary questions, each chosen for maximum information gain against the
+ * REMAINING candidates. Spice is no longer asked here — the profile's
+ * once-asked heat ceiling pre-trims the pool. When the pool is small enough,
+ * reasoning re-runs over just that handful and the refined picks replace the
+ * instant ones back on results.
  */
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -12,14 +13,12 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CookingLoader } from '@/components/cooking-loader';
-import { SpiceSlider } from '@/components/spice-slider';
 import { Loading, NavLink, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { useProgressSteps } from '@/hooks/use-progress-steps';
 import { callReason } from '@/lib/callReason';
 import {
   choicesToQA,
-  DEFAULT_SPICE,
   facetChoice,
   filterByFacet,
   filterBySpice,
@@ -29,25 +28,22 @@ import {
   type EngineChoice,
   type EngineOption,
   type EngineQuestion,
-  type SpiceLevel,
 } from '@/lib/questionEngine';
 import type { MenuItem } from '@/lib/types';
 import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
 
-type Step = 'spice' | 'narrow';
-
 export default function QuestionsScreen() {
   const router = useRouter();
   const session = useSession();
-  const { preferences, tdee } = useProfile();
+  const { preferences, tdee, spiceCeiling } = useProfile();
   const { candidates, verifyById, restaurantNotes, menuContext, crowdFavorites } = session;
 
-  const [step, setStep] = useState<Step>('spice');
-  const [spice, setSpice] = useState<SpiceLevel>(DEFAULT_SPICE);
-  const [pool, setPool] = useState<MenuItem[]>(candidates);
+  // The profile's heat ceiling silently trims the pool; recording it as a
+  // choice keeps the spice answer in the ranking context like it always was.
+  const [pool, setPool] = useState<MenuItem[]>(() => filterBySpice(candidates, spiceCeiling));
   const [asked, setAsked] = useState<Set<string>>(new Set());
-  const [choices, setChoices] = useState<EngineChoice[]>([]);
+  const [choices, setChoices] = useState<EngineChoice[]>(() => [spiceChoice(spiceCeiling)]);
   const [dynamicCount, setDynamicCount] = useState(0);
 
   const [busy, setBusy] = useState(false);
@@ -63,11 +59,21 @@ export default function QuestionsScreen() {
   // No safe candidates at all → nothing to refine; back to (avoid-only) results.
   useEffect(() => {
     if (menuContext && candidates.length === 0) {
-      session.setOutcome({ questions: [], answers: {}, spice: DEFAULT_SPICE, picks: [], source: 'refined' });
+      session.setOutcome({ questions: [], answers: {}, spice: spiceCeiling, picks: [], source: 'refined' });
       router.replace('/results');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuContext, candidates.length]);
+
+  // Entered refine but no facet can split the (pre-trimmed) pool — nothing to
+  // ask, so just re-rank directly. Results hides the button in this case; this
+  // is the safety net for direct entry. Mount-only by design.
+  useEffect(() => {
+    if (menuContext && pool.length > 0 && nextQuestion(pool, asked) === null) {
+      void runReason(pool, choices);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!menuContext) return <Loading message="Loading…" />;
   if (busy) {
@@ -77,7 +83,7 @@ export default function QuestionsScreen() {
     );
   }
 
-  const runReason = async (finalPool: MenuItem[], finalChoices: EngineChoice[], spiceLevel: SpiceLevel) => {
+  const runReason = async (finalPool: MenuItem[], finalChoices: EngineChoice[]) => {
     setBusy(true);
     setDone(false);
     setError(null);
@@ -101,30 +107,12 @@ export default function QuestionsScreen() {
         crowdFavorites: crowdNames,
         onProgress,
       });
-      session.setOutcome({ questions, answers, spice: spiceLevel, picks, source: 'refined' });
+      session.setOutcome({ questions, answers, spice: spiceCeiling, picks, source: 'refined' });
       setDone(true);
     } catch (e) {
       setBusy(false);
       setError(e instanceof Error ? e.message : 'Could not get a recommendation.');
     }
-  };
-
-  // Advance from the current pool: stop & reason, or keep narrowing.
-  const advance = (nextPool: MenuItem[], nextAsked: Set<string>, nextChoices: EngineChoice[], nextDynamic: number, spiceLevel: SpiceLevel) => {
-    const stop = shouldStopNarrowing(nextPool, nextDynamic) || nextQuestion(nextPool, nextAsked) === null;
-    if (stop) {
-      void runReason(nextPool, nextChoices, spiceLevel);
-    } else {
-      setStep('narrow');
-    }
-  };
-
-  const onSpiceContinue = () => {
-    const np = filterBySpice(candidates, spice);
-    const nextChoices = [spiceChoice(spice)];
-    setPool(np);
-    setChoices(nextChoices);
-    advance(np, new Set(), nextChoices, 0, spice);
   };
 
   const onAnswer = (question: EngineQuestion, option: EngineOption) => {
@@ -136,7 +124,10 @@ export default function QuestionsScreen() {
     setAsked(nextAsked);
     setChoices(nextChoices);
     setDynamicCount(nextDynamic);
-    advance(np, nextAsked, nextChoices, nextDynamic, spice);
+    // Stop & re-rank, or keep narrowing.
+    const stop =
+      shouldStopNarrowing(np, nextDynamic) || nextQuestion(np, nextAsked) === null;
+    if (stop) void runReason(np, nextChoices);
   };
 
   // ── Reasoning failed → offer a retry instead of a silent dead-end ─────────
@@ -148,41 +139,19 @@ export default function QuestionsScreen() {
           <Subtitle style={styles.qSub}>{error}</Subtitle>
         </View>
         <View style={styles.footer}>
-          <PrimaryButton label="Try again" onPress={() => void runReason(pool, choices, spice)} />
+          <PrimaryButton label="Try again" onPress={() => void runReason(pool, choices)} />
           <PrimaryButton label="Start over" variant="ghost" onPress={() => router.replace('/')} />
         </View>
       </SafeAreaView>
     );
   }
 
-  // ── Spice step ────────────────────────────────────────────────────────────
-  if (step === 'spice') {
-    return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <NavLink label="‹ Back to picks" onPress={() => router.back()} />
-          <Text style={styles.progress}>First, the basics</Text>
-        </View>
-        <View style={styles.body}>
-          <Title style={styles.q}>How much heat do you want?</Title>
-          <Subtitle style={styles.qSub}>I&apos;ll keep anything spicier than this off your list.</Subtitle>
-          <View style={styles.sliderBox}>
-            <SpiceSlider value={spice} onChange={setSpice} />
-          </View>
-        </View>
-        <View style={styles.footer}>
-          <PrimaryButton label="Continue →" onPress={onSpiceContinue} />
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // ── Narrowing step ──────────────────────────────────────────────────────────
-  // `advance` only enters this step when a question exists (and otherwise kicks
-  // reasoning itself), so `question` is non-null here. The loader is a safe
-  // fallback that never calls setState during render.
+  // ── Narrowing ───────────────────────────────────────────────────────────────
+  // `onAnswer` kicks reasoning itself when no further question exists, and the
+  // mount effect covers a pool with nothing to ask, so `question` is non-null
+  // here. The loader is a safe fallback that never calls setState during render.
   const question = nextQuestion(pool, asked);
-  if (!question) return <Loading message="Finding your match…" />;
+  if (!question) return <Loading message="Refining your picks…" />;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -221,14 +190,6 @@ const styles = StyleSheet.create({
   body: { flex: 1, justifyContent: 'center', gap: Plait.space.md },
   q: { fontSize: 32, lineHeight: 40, marginBottom: Plait.space.sm },
   qSub: { fontSize: 15 },
-  sliderBox: {
-    backgroundColor: Plait.color.card,
-    borderRadius: Plait.radius.lg,
-    borderWidth: 1,
-    borderColor: Plait.color.border,
-    padding: Plait.space.lg,
-    marginTop: Plait.space.md,
-  },
   options: { gap: Plait.space.sm, paddingBottom: Plait.space.xl, paddingTop: Plait.space.sm },
   option: {
     flexDirection: 'row',

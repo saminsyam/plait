@@ -8,10 +8,12 @@ import { test } from 'node:test';
 import type { MenuItem } from './types';
 import {
   choicesToQA,
+  DEFAULT_SPICE,
   facetChoice,
   filterByFacet,
   filterBySpice,
   nextQuestion,
+  parseSpiceCeiling,
   shouldStopNarrowing,
   spiceChoice,
 } from './questionEngine';
@@ -117,4 +119,17 @@ test('a full narrowing run converges to a small candidate set', () => {
     dynamic++;
   }
   assert.ok(pool.length >= 1 && pool.length <= menu.length);
+});
+
+test('parseSpiceCeiling accepts stored 1–3, falls back for everything else', () => {
+  assert.equal(parseSpiceCeiling('1'), 1);
+  assert.equal(parseSpiceCeiling('2'), 2);
+  assert.equal(parseSpiceCeiling('3'), 3);
+  // Absent, old 1–5-scale values, and garbage all fall back to the default.
+  assert.equal(parseSpiceCeiling(null), DEFAULT_SPICE);
+  assert.equal(parseSpiceCeiling(undefined), DEFAULT_SPICE);
+  assert.equal(parseSpiceCeiling('5'), DEFAULT_SPICE);
+  assert.equal(parseSpiceCeiling('0'), DEFAULT_SPICE);
+  assert.equal(parseSpiceCeiling('mild'), DEFAULT_SPICE);
+  assert.equal(parseSpiceCeiling('2.5'), DEFAULT_SPICE);
 });

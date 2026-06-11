@@ -77,6 +77,8 @@ type ReasonInput = {
    * on-device). One short context line — lets picks cite real crowd opinion.
    */
   crowdFavorites?: string[];
+  /** Active quick-tune requests ("keep the price down"). One context line. */
+  tuneRequests?: string[];
   /** Live status reporting for the loading screen. */
   onProgress?: OnProgress;
 };
@@ -101,6 +103,7 @@ export async function callReason({
   tdeeContext,
   restaurantNotes,
   crowdFavorites,
+  tuneRequests,
   onProgress,
 }: ReasonInput): Promise<Pick[]> {
   // Annotate the verify survivors so the model knows which picks require a
@@ -132,6 +135,9 @@ export async function callReason({
     contextBlock += `Web reviews repeatedly praise: ${crowdFavorites
       .map((n) => `"${n}"`)
       .join(', ')} — worth citing if one becomes a pick.\n`;
+  }
+  if (tuneRequests && tuneRequests.length > 0) {
+    contextBlock += `Right now the user also wants: ${tuneRequests.join('; ')}.\n`;
   }
 
   onProgress?.({

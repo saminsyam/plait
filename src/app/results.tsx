@@ -22,7 +22,8 @@ import { useCrowdFavorites } from '@/hooks/use-crowd-favorites';
 import { useProgressSteps, type ProgressStep } from '@/hooks/use-progress-steps';
 import { callDishDetail, type DishDetail } from '@/lib/callDishDetail';
 import { callReason } from '@/lib/callReason';
-import { DEFAULT_SPICE } from '@/lib/questionEngine';
+import { filterBySpice, nextQuestion } from '@/lib/questionEngine';
+import { applyQuickTunes, QUICK_TUNES, tuneRequests, type QuickTuneId } from '@/lib/quickTune';
 import { formatUsd, getUsage } from '@/lib/usage';
 import type { MenuItem, Pick } from '@/lib/types';
 import { useProfile } from '@/state/profile';
@@ -142,7 +143,7 @@ function FadeInSection({
 export default function ResultsScreen() {
   const router = useRouter();
   const session = useSession();
-  const { preferences, tdee } = useProfile();
+  const { preferences, tdee, spiceCeiling } = useProfile();
   const {
     picks,
     items,
@@ -178,32 +179,40 @@ export default function ResultsScreen() {
   // questions. The narrowing flow is an optional refinement (button below).
   const { steps, onProgress, resetProgress } = useProgressSteps();
   const [rankState, setRankState] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
+  const [tunes, setTunes] = useState<QuickTuneId[]>([]);
   const rankStarted = useRef(false);
 
-  const runRank = useCallback(async () => {
-    setRankState('running');
-    resetProgress();
-    try {
-      // One short context line for review-praised dishes still in the pool.
-      // (Gate-blocked items were never candidates, so they can't appear here.)
-      const crowdNames = candidates.filter((i) => crowdFavorites[i.id]).map((i) => i.name);
-      const ranked = await callReason({
-        items: candidates,
-        questions: [],
-        answers: {},
-        userPreferences: preferences ?? '',
-        verifyById,
-        tdeeContext: tdee,
-        restaurantNotes,
-        crowdFavorites: crowdNames,
-        onProgress,
-      });
-      setOutcome({ questions: [], answers: {}, spice: DEFAULT_SPICE, picks: ranked, source: 'instant' });
-      setRankState('done');
-    } catch {
-      setRankState('error');
-    }
-  }, [candidates, crowdFavorites, preferences, verifyById, tdee, restaurantNotes, onProgress, resetProgress, setOutcome]);
+  const runRank = useCallback(
+    async (tuneIds: QuickTuneId[]) => {
+      setRankState('running');
+      resetProgress();
+      try {
+        // Profile heat ceiling + active chips pre-trim the pool on-device —
+        // zero tokens, and only ever over the gate's survivors.
+        const pool = applyQuickTunes(filterBySpice(candidates, spiceCeiling), tuneIds);
+        // One short context line for review-praised dishes still in the pool.
+        // (Gate-blocked items were never candidates, so they can't appear here.)
+        const crowdNames = pool.filter((i) => crowdFavorites[i.id]).map((i) => i.name);
+        const ranked = await callReason({
+          items: pool,
+          questions: [],
+          answers: {},
+          userPreferences: preferences ?? '',
+          verifyById,
+          tdeeContext: tdee,
+          restaurantNotes,
+          crowdFavorites: crowdNames,
+          tuneRequests: tuneRequests(tuneIds),
+          onProgress,
+        });
+        setOutcome({ questions: [], answers: {}, spice: spiceCeiling, picks: ranked, source: 'instant' });
+        setRankState('done');
+      } catch {
+        setRankState('error');
+      }
+    },
+    [candidates, spiceCeiling, crowdFavorites, preferences, verifyById, tdee, restaurantNotes, onProgress, resetProgress, setOutcome]
+  );
 
   const hasScan = !!menuContext && items.length > 0;
   useEffect(() => {
@@ -212,8 +221,16 @@ export default function ResultsScreen() {
     // A ranking already ran for this scan (e.g. returning from refine).
     if (picks.length > 0 || picksSource !== null) return;
     rankStarted.current = true;
-    void runRank();
+    void runRank([]);
   }, [hasScan, candidates.length, picks.length, picksSource, runRank]);
+
+  // One-tap corrections: toggle a chip → one re-rank with the new set.
+  const toggleTune = (id: QuickTuneId) => {
+    if (rankState === 'running') return;
+    const next = tunes.includes(id) ? tunes.filter((t) => t !== id) : [...tunes, id];
+    setTunes(next);
+    void runRank(next);
+  };
 
   // Guard: no scan in progress → home.
   useEffect(() => {
@@ -339,6 +356,30 @@ export default function ResultsScreen() {
 
         {candidates.length > 0 && <Text style={styles.picksHeader}>Your top picks</Text>}
 
+        {/* Quick-tune chips — deterministic pool filters + one context line,
+            one re-rank per tap. Far lighter than the full refine flow. */}
+        {candidates.length > 1 && picksSource !== null && (
+          <View style={styles.tuneRow}>
+            {QUICK_TUNES.map((t) => {
+              const active = tunes.includes(t.id);
+              return (
+                <Pressable
+                  key={t.id}
+                  onPress={() => toggleTune(t.id)}
+                  style={[
+                    styles.tuneChip,
+                    active && styles.tuneChipActive,
+                    rankState === 'running' && { opacity: 0.4 },
+                  ]}>
+                  <Text style={[styles.tuneChipText, active && styles.tuneChipTextActive]}>
+                    {t.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+
         {candidates.length === 0 && (
           <Body style={styles.emptyPicks}>
             Nothing on this menu cleared your hard restrictions. The dishes below
@@ -353,7 +394,7 @@ export default function ResultsScreen() {
             <Body style={styles.emptyPicks}>
               The menu is read — only the ranking failed. Give it another go.
             </Body>
-            <PrimaryButton label="Try ranking again" onPress={() => void runRank()} />
+            <PrimaryButton label="Try ranking again" onPress={() => void runRank(tunes)} />
           </View>
         )}
 
@@ -381,14 +422,17 @@ export default function ResultsScreen() {
           );
         })}
 
-        {/* The narrowing flow, demoted to an optional refinement. */}
-        {picks.length > 0 && rankState !== 'running' && candidates.length > 1 && (
-          <PrimaryButton
-            label="🎯  Not quite? Refine my picks"
-            variant="teal"
-            onPress={() => router.push('/questions')}
-          />
-        )}
+        {/* The narrowing flow, demoted to an optional refinement — hidden when
+            no facet could split the (spice-trimmed) pool anyway. */}
+        {picks.length > 0 &&
+          rankState !== 'running' &&
+          nextQuestion(filterBySpice(candidates, spiceCeiling), new Set()) !== null && (
+            <PrimaryButton
+              label="🎯  Not quite? Refine my picks"
+              variant="teal"
+              onPress={() => router.push('/questions')}
+            />
+          )}
 
         {/* Avoid list — the hard-gate's blocked items, with reasons. Kept
             visually secondary to the top picks above. */}
@@ -719,6 +763,20 @@ const styles = StyleSheet.create({
   rankLine: { flexDirection: 'row', alignItems: 'center', gap: Plait.space.sm },
   rankRow: { flex: 1, color: Plait.color.text, fontSize: 14, fontFamily: Plait.font.sans },
   rankTime: { color: Plait.color.textDim, fontSize: 12, fontFamily: Plait.font.sans },
+
+  // Quick-tune chips
+  tuneRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Plait.space.sm },
+  tuneChip: {
+    borderRadius: Plait.radius.pill,
+    borderWidth: 1,
+    borderColor: Plait.color.border,
+    backgroundColor: Plait.color.card,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  tuneChipActive: { backgroundColor: Plait.color.coral, borderColor: Plait.color.coral },
+  tuneChipText: { color: Plait.color.text, fontSize: 13, fontWeight: '600', fontFamily: Plait.font.sans },
+  tuneChipTextActive: { color: '#111111' },
 
   // Empty + avoid list (secondary to the picks)
   emptyPicks: { color: Plait.color.textDim, fontSize: 14, lineHeight: 20 },

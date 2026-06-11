@@ -11,22 +11,26 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { SpiceSlider } from '@/components/spice-slider';
 import { PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { parsePreferences } from '@/lib/parsePreferences';
+import type { SpiceLevel } from '@/lib/questionEngine';
 import { useProfile } from '@/state/profile';
 
 const MIN_CHARS = 3;
 
 export default function PreferencesScreen() {
   const router = useRouter();
-  const { preferences, savePreferences, saveHardConstraints } = useProfile();
+  const { preferences, savePreferences, saveHardConstraints, spiceCeiling, saveSpiceCeiling } =
+    useProfile();
   // `edit` is passed when arriving from the home-screen pencil; otherwise this
   // is first-launch onboarding and we continue forward to the TDEE step.
   const { edit } = useLocalSearchParams<{ edit?: string }>();
   const isEditing = edit === '1';
 
   const [text, setText] = useState(preferences ?? '');
+  const [spice, setSpice] = useState<SpiceLevel>(spiceCeiling);
   const [saving, setSaving] = useState(false);
 
   const canContinue = text.trim().length >= MIN_CHARS && !saving;
@@ -39,7 +43,11 @@ export default function PreferencesScreen() {
     // stay in the text and flow to the model as ranking context. Parsing never
     // throws — on failure we save with no hard gate rather than blocking.
     const constraints = await parsePreferences(text);
-    await Promise.all([savePreferences(text), saveHardConstraints(constraints)]);
+    await Promise.all([
+      savePreferences(text),
+      saveHardConstraints(constraints),
+      saveSpiceCeiling(spice),
+    ]);
     if (isEditing) router.back();
     else router.replace('/');
   };
@@ -80,6 +88,12 @@ export default function PreferencesScreen() {
             🔒 I automatically detect allergies and halal/kosher and never recommend a
             dish that breaks them — just mention them above.
           </Text>
+
+          {/* The one constant taste question, asked once instead of every scan. */}
+          <View style={styles.spiceBlock}>
+            <Text style={styles.spiceLabel}>Your usual heat ceiling</Text>
+            <SpiceSlider value={spice} onChange={setSpice} />
+          </View>
         </ScrollView>
 
         <View style={styles.footer}>
@@ -126,6 +140,13 @@ const styles = StyleSheet.create({
     color: Plait.color.textDim,
     fontSize: 13,
     lineHeight: 19,
+    fontFamily: Plait.font.sans,
+  },
+  spiceBlock: { gap: Plait.space.sm },
+  spiceLabel: {
+    color: Plait.color.textDim,
+    fontSize: 14,
+    fontWeight: '600',
     fontFamily: Plait.font.sans,
   },
   footer: {
