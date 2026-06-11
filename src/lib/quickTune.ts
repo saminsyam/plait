@@ -4,14 +4,15 @@
  * pool filter (zero tokens; identity for context-only chips) plus ONE short
  * request line for the re-rank call.
  *
- * Chips only ever narrow the gate's survivors — they can never resurrect a
- * blocked item — and every filter falls back to the unfiltered pool rather
- * than stranding the user with nothing.
+ * Chips only ever narrow (or reorder) the gate's survivors — they can never
+ * resurrect a blocked item — and every filter falls back to the unfiltered
+ * pool rather than stranding the user with nothing.
  */
 import { classifyAgainstConstraint } from './dietaryFilter';
+import { PROTEIN_VALUE_REQUEST, sortByProteinValue } from './proteinValue';
 import type { MenuItem } from './types';
 
-export type QuickTuneId = 'lighter' | 'protein' | 'cheaper' | 'no_seafood';
+export type QuickTuneId = 'lighter' | 'protein_value' | 'no_seafood';
 
 export type QuickTune = {
   id: QuickTuneId;
@@ -33,21 +34,6 @@ function isSeafood(item: MenuItem): boolean {
   );
 }
 
-/**
- * Keep the cheaper half: dishes at or below the median of the priced items.
- * Unpriced items (price 0) stay — absence of a price isn't evidence of cost.
- * Fewer than 2 priced items → nothing meaningful to split on.
- */
-function cheaperHalf(pool: MenuItem[]): MenuItem[] {
-  const priced = pool
-    .map((i) => i.price)
-    .filter((p) => p > 0)
-    .sort((a, b) => a - b);
-  if (priced.length < 2) return pool;
-  const median = priced[Math.floor((priced.length - 1) / 2)];
-  return pool.filter((i) => i.price === 0 || i.price <= median);
-}
-
 export const QUICK_TUNES: QuickTune[] = [
   {
     id: 'lighter',
@@ -57,18 +43,15 @@ export const QUICK_TUNES: QuickTune[] = [
     request: 'something lighter — fresh over heavy',
   },
   {
-    id: 'protein',
-    label: '💪 More protein',
-    // Grams aren't known before ranking, so this chip is context-only.
-    filter: (pool) => pool,
-    request: 'maximize protein',
+    id: 'protein_value',
+    label: '💪 Protein per $',
+    // Reorder, never drop: value candidates first, best est. ratio leading,
+    // so the ranker reads the pool best-gains-per-dollar first.
+    filter: sortByProteinValue,
+    request: PROTEIN_VALUE_REQUEST,
   },
-  {
-    id: 'cheaper',
-    label: '💸 Cheaper',
-    filter: cheaperHalf,
-    request: 'keep the price down',
-  },
+  // Price moved to the budget slider (lib/budget) — a real dollar ceiling
+  // derived from the menu beats a blind cheaper-half cut.
   {
     id: 'no_seafood',
     label: '🐟 No seafood',

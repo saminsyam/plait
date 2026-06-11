@@ -363,10 +363,11 @@ function normalizeLocations(v: unknown): string[] {
 const ENRICH_SYSTEM = `You are a food analyst for a dietary app. You are given a restaurant menu as a JSON
 list of items (dish names). Infer properties from each name. Return ONLY a compact JSON object (no markdown, no preamble):
 {
-  "items": [ { "id": <same id>, "dietary_tags": ["halal"|"vegetarian"|"vegan"|"gluten-free"], "protein_type": "beef|chicken|fish|seafood|lamb|pork|vegetarian|vegan|mixed|unknown", "spice_level": 0-5, "category": "starter|main|side|dessert|drink", "flavor": ["rich"|"savory"|"smoky"|"fresh"|"tangy"|"sweet"|"spicy"] } ],
+  "items": [ { "id": <same id>, "dietary_tags": ["halal"|"vegetarian"|"vegan"|"gluten-free"], "protein_type": "beef|chicken|fish|seafood|lamb|pork|vegetarian|vegan|mixed|unknown", "spice_level": 0-5, "category": "starter|main|side|dessert|drink", "flavor": ["rich"|"savory"|"smoky"|"fresh"|"tangy"|"sweet"|"spicy"], "protein_g_est": <int> } ],
   "menu_context": { "cuisine_type": string, "restaurant_notes": string[] }
 }
-Only assert dietary_tags / flavor tags you are confident about. Keep it terse.`;
+Only assert dietary_tags / flavor tags you are confident about. Keep it terse.
+"protein_g_est": rough grams of protein per typical serving (integer); 0 when you can't tell.`;
 
 const parsePrice = (price: string | null): number => {
   if (!price) return 0;
@@ -407,7 +408,8 @@ export async function buildScanFromLookup(
       system: ENRICH_SYSTEM,
       model: VISION_MODEL,
       label: 'lookup.tag',
-      maxTokens: 4000,
+      // ~75 output tokens per compact item (incl. protein_g_est).
+      maxTokens: 4500,
       content: [{ type: 'text', text: JSON.stringify(payload) }],
       onText: (text) => {
         const count = (text.match(/"id"/g) ?? []).length;
@@ -462,6 +464,10 @@ export async function buildScanFromLookup(
       protein_type,
       category: typeof e?.category === 'string' ? (e.category as string) : '',
       cuisine_type: menuContext.cuisine_type,
+      protein_g_est:
+        typeof e?.protein_g_est === 'number' && e.protein_g_est > 0
+          ? Math.round(e.protein_g_est as number)
+          : 0,
     };
   });
 

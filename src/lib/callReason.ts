@@ -26,6 +26,10 @@ For each pick return JSON matching this shape exactly:
 Confidence guide: high = nutrition info stated on menu, medium = can infer from
 ingredients, low = rough estimate from dish type only.
 
+Items may carry "protein_g_est" — a rough name-only protein guess from an
+earlier pass. Use it as a starting point for "protein_g", refining with any
+ingredient/portion signal you have; never treat it as authoritative.
+
 Some items may be marked "needs_verification": true with a "verify_reasons" list.
 These passed an on-device safety pre-filter only as UNCERTAIN (not confirmed safe) —
 e.g. a meat dish whose halal slaughter could not be verified, or a dish whose
@@ -98,6 +102,9 @@ function slimItem(item: MenuItem): Record<string, unknown> {
   if (item.spice_level > 0) out.spice_level = item.spice_level;
   if (item.dietary_tags.length > 0) out.dietary_tags = item.dietary_tags;
   if (item.protein_type.length > 0) out.protein_type = item.protein_type;
+  // Name-only protein guess from enrichment — grounds the macro estimates and
+  // powers the protein-per-dollar tune. ~4 tokens/item, worth the signal.
+  if ((item.protein_g_est ?? 0) > 0) out.protein_g_est = item.protein_g_est;
   return out;
 }
 

@@ -38,22 +38,6 @@ test('lighter drops rich-tagged dishes and desserts', () => {
   assert.deepEqual(names(applyQuickTunes(pool, ['lighter'])), ['Garden Salad']);
 });
 
-test('cheaper keeps the at-or-below-median half and unpriced items', () => {
-  const pool = [
-    item('Cheap', { price: 8 }),
-    item('Mid', { price: 12 }),
-    item('Pricey', { price: 30 }),
-    item('Market Price', { price: 0 }),
-  ];
-  // Median of [8, 12, 30] is 12 → 30 is cut, unpriced stays.
-  assert.deepEqual(names(applyQuickTunes(pool, ['cheaper'])), ['Cheap', 'Mid', 'Market Price']);
-});
-
-test('cheaper is a no-op with fewer than 2 priced items', () => {
-  const pool = [item('Only Priced', { price: 9 }), item('Unpriced', { price: 0 })];
-  assert.equal(applyQuickTunes(pool, ['cheaper']).length, 2);
-});
-
 test('no_seafood cuts shrimp and salmon by keyword/protein, keeps chicken', () => {
   const pool = [
     item('Garlic Shrimp'),
@@ -63,10 +47,18 @@ test('no_seafood cuts shrimp and salmon by keyword/protein, keeps chicken', () =
   assert.deepEqual(names(applyQuickTunes(pool, ['no_seafood'])), ['Chicken Karaage']);
 });
 
-test('protein chip never filters — it is context-only', () => {
-  const pool = [item('Tofu Bowl', { protein_type: ['vegan'] }), item('Salad')];
-  assert.equal(applyQuickTunes(pool, ['protein']).length, 2);
-  assert.deepEqual(tuneRequests(['protein']), ['maximize protein']);
+test('protein_value chip reorders by est. ratio but never drops a dish', () => {
+  const pool = [
+    item('Salad', { price: 12, protein_g_est: 8 }), // low protein → trailing
+    item('Chicken Plate', { price: 14, protein_g_est: 42 }), // 3.0 g/$
+    item('Steak', { price: 30, protein_g_est: 60 }), // 2.0 g/$
+  ];
+  assert.deepEqual(names(applyQuickTunes(pool, ['protein_value'])), [
+    'Chicken Plate',
+    'Steak',
+    'Salad',
+  ]);
+  assert.equal(tuneRequests(['protein_value']).length, 1);
 });
 
 test('a chip that would empty the pool is skipped, not obeyed', () => {
@@ -79,13 +71,9 @@ test('chips compose in order', () => {
     item('Rich Lobster', { flavor_profile: ['rich'], price: 40 }),
     item('Shrimp Salad', { price: 10 }),
     item('Veg Stir-fry', { price: 11 }),
-    item('Steak Frites', { price: 35 }),
   ];
-  // lighter cuts Rich Lobster; no_seafood cuts Shrimp Salad;
-  // cheaper over the rest (11, 35 → median 11) cuts Steak Frites.
-  assert.deepEqual(names(applyQuickTunes(pool, ['lighter', 'no_seafood', 'cheaper'])), [
-    'Veg Stir-fry',
-  ]);
+  // lighter cuts Rich Lobster; no_seafood cuts Shrimp Salad.
+  assert.deepEqual(names(applyQuickTunes(pool, ['lighter', 'no_seafood'])), ['Veg Stir-fry']);
 });
 
 test('every chip has a request line', () => {

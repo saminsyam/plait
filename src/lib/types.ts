@@ -14,6 +14,12 @@ export type MenuItem = {
   /** Coarse menu section, used by the narrowing engine. */
   category: string; // starter, main, side, dessert, drink
   cuisine_type: string;
+  /**
+   * Rough protein estimate (grams/serving) from the enrichment pass — a
+   * name-only guess, only good enough for the protein-per-dollar value sort
+   * (lib/proteinValue). 0 or absent = unknown.
+   */
+  protein_g_est?: number;
 };
 
 export type QuestionOption = {

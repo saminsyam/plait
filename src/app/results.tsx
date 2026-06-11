@@ -15,11 +15,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { BudgetSlider } from '@/components/budget-slider';
 import { RestaurantSummary } from '@/components/restaurant-summary';
 import { Body, Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { useCrowdFavorites } from '@/hooks/use-crowd-favorites';
 import { useProgressSteps, type ProgressStep } from '@/hooks/use-progress-steps';
+import { budgetBounds, budgetRequest, filterByBudget } from '@/lib/budget';
+import { proteinValueLabel } from '@/lib/proteinValue';
 import { callDishDetail, type DishDetail } from '@/lib/callDishDetail';
 import { callReason } from '@/lib/callReason';
 import { filterBySpice, nextQuestion } from '@/lib/questionEngine';
@@ -181,16 +184,21 @@ export default function ResultsScreen() {
   const { steps, onProgress, resetProgress } = useProgressSteps();
   const [rankState, setRankState] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [tunes, setTunes] = useState<QuickTuneId[]>([]);
+  // Per-menu price ceiling from the budget slider; null = no limit.
+  const [budget, setBudget] = useState<number | null>(null);
   const rankStarted = useRef(false);
 
   const runRank = useCallback(
-    async (tuneIds: QuickTuneId[]) => {
+    async (tuneIds: QuickTuneId[], ceiling: number | null) => {
       setRankState('running');
       resetProgress();
       try {
-        // Profile heat ceiling + active chips pre-trim the pool on-device —
-        // zero tokens, and only ever over the gate's survivors.
-        const pool = applyQuickTunes(filterBySpice(candidates, spiceCeiling), tuneIds);
+        // Profile heat ceiling + budget ceiling + active chips pre-trim the
+        // pool on-device — zero tokens, and only ever over the gate's survivors.
+        const pool = applyQuickTunes(
+          filterByBudget(filterBySpice(candidates, spiceCeiling), ceiling),
+          tuneIds
+        );
         // One short context line for review-praised dishes still in the pool.
         // (Gate-blocked items were never candidates, so they can't appear here.)
         const crowdNames = pool.filter((i) => crowdFavorites[i.id]).map((i) => i.name);
@@ -203,7 +211,10 @@ export default function ResultsScreen() {
           tdeeContext: tdee,
           restaurantNotes,
           crowdFavorites: crowdNames,
-          tuneRequests: tuneRequests(tuneIds),
+          tuneRequests: [
+            ...tuneRequests(tuneIds),
+            ...(budgetRequest(ceiling) ? [budgetRequest(ceiling)!] : []),
+          ],
           onProgress,
         });
         setOutcome({ questions: [], answers: {}, spice: spiceCeiling, picks: ranked, source: 'instant' });
@@ -225,7 +236,7 @@ export default function ResultsScreen() {
     // A ranking already ran for this scan (e.g. returning from refine).
     if (picks.length > 0 || picksSource !== null) return;
     rankStarted.current = true;
-    void runRank([]);
+    void runRank([], null);
   }, [hasScan, candidates.length, picks.length, picksSource, crowdReady, runRank]);
 
   // One-tap corrections: toggle a chip → one re-rank with the new set.
@@ -233,7 +244,14 @@ export default function ResultsScreen() {
     if (rankState === 'running') return;
     const next = tunes.includes(id) ? tunes.filter((t) => t !== id) : [...tunes, id];
     setTunes(next);
-    void runRank(next);
+    void runRank(next, budget);
+  };
+
+  // Budget slider release → one re-rank with the new ceiling (null = no limit).
+  const commitBudget = (ceiling: number | null) => {
+    if (rankState === 'running' || ceiling === budget) return;
+    setBudget(ceiling);
+    void runRank(tunes, ceiling);
   };
 
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
@@ -333,6 +351,8 @@ export default function ResultsScreen() {
 
   // Refinement availability + the deterministic "would questions help?" nudge.
   const trimmedPool = filterBySpice(candidates, spiceCeiling);
+  // Budget slider range from the spice-trimmed pool's prices (null = no slider).
+  const priceBounds = budgetBounds(trimmedPool);
   const refinable = picks.length > 0 && nextQuestion(trimmedPool, new Set()) !== null;
   const nudge =
     refinable && picksSource === 'instant' && !nudgeDismissed && rankState !== 'running'
@@ -387,6 +407,17 @@ export default function ResultsScreen() {
           </View>
         )}
 
+        {/* Budget slider — range derived from THIS menu's prices; commit on
+            release → deterministic pool trim + one re-rank (like the chips). */}
+        {priceBounds && picksSource !== null && (
+          <BudgetSlider
+            bounds={priceBounds}
+            value={budget}
+            disabled={rankState === 'running'}
+            onCommit={commitBudget}
+          />
+        )}
+
         {/* Quick-tune chips — deterministic pool filters + one context line,
             one re-rank per tap. Far lighter than the full refine flow. */}
         {candidates.length > 1 && picksSource !== null && (
@@ -425,7 +456,7 @@ export default function ResultsScreen() {
             <Body style={styles.emptyPicks}>
               The menu is read — only the ranking failed. Give it another go.
             </Body>
-            <PrimaryButton label="Try ranking again" onPress={() => void runRank(tunes)} />
+            <PrimaryButton label="Try ranking again" onPress={() => void runRank(tunes, budget)} />
           </View>
         )}
 
@@ -438,6 +469,7 @@ export default function ResultsScreen() {
               key={pick.item_id}
               pick={pick}
               item={item}
+              showValue={tunes.includes('protein_value')}
               halalCertified={halalCertified}
               maxProtein={maxProtein}
               maxCarbs={maxCarbs}
@@ -540,6 +572,7 @@ function UsageLine() {
 function Card({
   pick,
   item,
+  showValue,
   halalCertified,
   maxProtein,
   maxCarbs,
@@ -554,6 +587,8 @@ function Card({
 }: {
   pick: Pick;
   item: MenuItem;
+  /** Protein-per-$ tune is active — show the value ratio next to the price. */
+  showValue: boolean;
   halalCertified: boolean;
   maxProtein: number;
   maxCarbs: number;
@@ -576,6 +611,9 @@ function Card({
   const isTop = pick.rank === 1;
   const strong = isStrongFlag(effectiveFlag);
   const severity = strong ? Plait.color.danger : Plait.color.warn;
+  // Ratio from the RANKER's protein estimate (sharper than the name-only
+  // enrichment guess) over the menu price; null when either side is unknown.
+  const valueLabel = showValue ? proteinValueLabel(pick.protein_g, item.price) : null;
 
   return (
     <Pressable
@@ -593,6 +631,13 @@ function Card({
         <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
         {item.price > 0 && <Text style={styles.price}>${item.price}</Text>}
       </View>
+
+      {/* Gains-per-dollar badge — only while the Protein per $ tune is on. */}
+      {valueLabel && (
+        <View style={styles.valueBadge}>
+          <Text style={styles.valueBadgeText}>💪 {valueLabel}</Text>
+        </View>
+      )}
 
       {/* Macro bars */}
       {hasMacros && (
@@ -806,6 +851,19 @@ const styles = StyleSheet.create({
   tuneChipActive: { backgroundColor: Plait.color.coral, borderColor: Plait.color.coral },
   tuneChipText: { color: Plait.color.text, fontSize: 13, fontWeight: '600', fontFamily: Plait.font.sans },
   tuneChipTextActive: { color: '#111111' },
+  valueBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: Plait.color.background,
+    borderRadius: Plait.radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  valueBadgeText: {
+    color: Plait.color.teal,
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: Plait.font.sans,
+  },
 
   // Refine nudge
   nudgeRow: {

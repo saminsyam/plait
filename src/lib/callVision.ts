@@ -162,12 +162,14 @@ properties from its name. Be conservative.
 
 Return ONLY a COMPACT JSON array (no markdown, no preamble, no extra whitespace),
 one object per item, SAME order and SAME id as the input:
-[{"id":<id>,"dietary_tags":["halal"|"vegetarian"|"vegan"|"gluten-free"],"protein_type":"beef|chicken|fish|seafood|lamb|pork|vegetarian|vegan|mixed|unknown","spice_level":0-5,"category":"starter|main|side|dessert|drink","flavor":["rich"|"savory"|"smoky"|"fresh"|"tangy"|"sweet"|"spicy"]}]
+[{"id":<id>,"dietary_tags":["halal"|"vegetarian"|"vegan"|"gluten-free"],"protein_type":"beef|chicken|fish|seafood|lamb|pork|vegetarian|vegan|mixed|unknown","spice_level":0-5,"category":"starter|main|side|dessert|drink","flavor":["rich"|"savory"|"smoky"|"fresh"|"tangy"|"sweet"|"spicy"],"protein_g_est":<int>}]
 
 Rules:
 - Only include dietary_tags / flavor tags you are confident about; use [] otherwise.
 - "category": best guess at the menu section.
-- "flavor": 1–2 dominant tags from the allowed set. Keep it terse.`;
+- "flavor": 1–2 dominant tags from the allowed set. Keep it terse.
+- "protein_g_est": rough grams of protein per typical serving (integer).
+  Use 0 when you can't tell (drinks, unclear dishes).`;
 
 type Enrichment = {
   id?: unknown;
@@ -177,6 +179,7 @@ type Enrichment = {
   spice_level?: unknown;
   category?: unknown;
   flavor?: unknown;
+  protein_g_est?: unknown;
 };
 
 /** Returns an id→enrichment map. On ANY failure returns an empty map (untagged). */
@@ -192,9 +195,9 @@ async function normalizeItems(
       system: NORMALIZE_SYSTEM,
       model: VISION_MODEL,
       label: 'vision.tag',
-      // ~70 output tokens per compact item: 6000 covers an 80-item menu. (The
-      // old 3500 cap silently truncated ~50+ item menus, dropping ALL tags.)
-      maxTokens: 6000,
+      // ~75 output tokens per compact item (incl. protein_g_est): 6500 covers
+      // an 80-item menu. (The old 3500 cap silently truncated ~50+ item menus.)
+      maxTokens: 6500,
       content: [{ type: 'text', text: JSON.stringify(payload) }],
       onText: (text) => {
         const count = (text.match(/"id"/g) ?? []).length;
@@ -281,6 +284,10 @@ function mergeItem(
     protein_type,
     category: typeof enr?.category === 'string' ? enr.category : '',
     cuisine_type: typeof enr?.cuisine_type === 'string' ? enr.cuisine_type : fallbackCuisine,
+    protein_g_est:
+      typeof enr?.protein_g_est === 'number' && enr.protein_g_est > 0
+        ? Math.round(enr.protein_g_est)
+        : 0,
   };
 }
 
