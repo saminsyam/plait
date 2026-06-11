@@ -377,7 +377,7 @@ const styles = StyleSheet.create({
     borderColor: Plait.color.coral,
   },
   chipText: { color: Plait.color.text, fontSize: 15, fontWeight: '600', fontFamily: Plait.font.sans },
-  chipTextSelected: { color: '#111111' },
+  chipTextSelected: { color: '#FFFFFF' },
   flexChip: { flex: 1 },
   activityWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Plait.space.sm },
   resultCard: {

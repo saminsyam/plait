@@ -79,7 +79,8 @@ export function BudgetSlider({
 
   const onTrackLayout = (e: LayoutChangeEvent) => {
     trackWidth.current = Math.max(1, e.nativeEvent.layout.width);
-    e.currentTarget.measureInWindow((x) => {
+    // react-native-web's layout event has no native handle / measureInWindow.
+    e.currentTarget?.measureInWindow?.((x) => {
       trackLeft.current = x;
     });
   };
@@ -115,14 +116,14 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   labels: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  caption: { color: Plait.color.textDim, fontSize: 13, fontWeight: '600', fontFamily: Plait.font.sans },
-  value: { color: Plait.color.coral, fontSize: 14, fontWeight: '700', fontFamily: Plait.font.sans },
-  valueDim: { color: Plait.color.textDim },
+  caption: { color: Plait.color.inkSoft, fontSize: 13, fontFamily: Plait.font.bodySemiBold },
+  value: { color: Plait.color.green, fontSize: 13, fontFamily: Plait.font.monoSemiBold },
+  valueDim: { color: Plait.color.inkSoft },
   hitArea: { paddingVertical: 14, justifyContent: 'center' },
   track: {
     height: 6,
     borderRadius: 3,
-    backgroundColor: Plait.color.background,
+    backgroundColor: Plait.color.line,
   },
   fill: {
     position: 'absolute',
@@ -130,7 +131,7 @@ const styles = StyleSheet.create({
     top: 0,
     height: 6,
     borderRadius: 3,
-    backgroundColor: Plait.color.coral,
+    backgroundColor: Plait.color.green,
   },
   thumb: {
     position: 'absolute',
@@ -139,8 +140,8 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: Plait.color.coral,
+    backgroundColor: Plait.color.green,
     borderWidth: 3,
-    borderColor: Plait.color.background,
+    borderColor: Plait.color.card,
   },
 });

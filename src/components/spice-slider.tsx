@@ -71,7 +71,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontFamily: Plait.font.sans,
   },
-  labelActive: { color: '#111111' },
+  labelActive: { color: '#FFFFFF' },
   hint: {
     color: Plait.color.textDim,
     fontSize: 14,
