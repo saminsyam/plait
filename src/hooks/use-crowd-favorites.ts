@@ -1,18 +1,21 @@
 /**
- * Crowd-favorites lifecycle for the picks screen — Sushi 2.1 makes it fully
- * automatic: check the review cache for free, and when there's nothing cached
- * fire ONE background review search (~$0.02) without blocking anything. The
- * ★ crowd-favorite badges simply appear on the cards when the data lands.
+ * Crowd-favorites lifecycle for the picks screen — Sushi 2.1 folds online
+ * reviews into the *Popular* result. On scan we check the review cache for
+ * free, and when there's nothing cached we fire ONE review search (~$0.02).
  *
  * Matching returned dish names to scanned items is pure on-device string work
  * (zero tokens), and the dietary gate still rules: a review favorite that maps
- * to a gate-BLOCKED dish never enters the session map the ranking context
- * reads — honest data, same safety invariant.
+ * to a gate-BLOCKED dish never enters the rankable map — honest data, same
+ * safety invariant.
  *
- * `crowdReady` flips true once the initial cache check has resolved — the
- * instant rank waits for it so CACHED crowd favorites make it into the very
- * first ranking call instead of racing it. The background fetch is never
- * waited on; its names only feed later re-ranks (refine).
+ * `crowdReady` flips true once the local review CACHE check resolves — the
+ * Popular rank waits only for that, so it renders instantly (with cached
+ * reviews folded in when present). When nothing is cached the rank runs on the
+ * dietary profile alone and the background search folds its results in a beat
+ * later: `crowdMap` / `crowdEntries` update, so the ★ badges and reviewer
+ * blurbs simply appear on the already-shown cards (no re-rank, no shuffle).
+ * The hook returns `crowdMap` (itemId → name) directly so the rank reads the
+ * resolved cache without a cross-provider race.
  */
 import { useEffect, useRef, useState } from 'react';
 
@@ -27,15 +30,18 @@ import { useSession } from '@/state/session';
 export function useCrowdFavorites(): {
   /** Loaded review favorites (empty until the cache or the fetch lands). */
   crowdEntries: GatedFavorite[];
-  /** True once the (local, fast) cache check has resolved. */
+  /** itemId → crowd-favorite name, gated (blocked dishes excluded). */
+  crowdMap: Record<string, string>;
+  /** True once the local cache check resolves — the Popular rank waits on this. */
   crowdReady: boolean;
 } {
-  const { menuContext, items, blocked, setCrowdFavorites } = useSession();
+  const { menuContext, items, blocked } = useSession();
   const restaurantName = menuContext?.restaurant_name.trim() ?? '';
 
   const [crowdEntries, setCrowdEntries] = useState<GatedFavorite[]>([]);
+  const [crowdMap, setCrowdMap] = useState<Record<string, string>>({});
   const [crowdReady, setCrowdReady] = useState(false);
-  // One background search per restaurant, even across re-renders of the screen.
+  // One search per restaurant, even across re-renders of the screen.
   const fetchedFor = useRef<string | null>(null);
 
   useEffect(() => {
@@ -45,29 +51,29 @@ export function useCrowdFavorites(): {
     }
     let active = true;
 
-    // Fold a cached/fetched result into the badges + the session map the
-    // ranking call reads. Blocked matches stay out of the rankable map.
+    // Fold a cached/fetched result into the badges + the rankable map. Blocked
+    // matches stay out of the map so a blocked dish can never be cited.
     const applyReviews = (r: ReviewsResult) => {
       if (!active || !r.found) return;
       const { entries, rankable } = gateCrowdFavorites(
         matchCrowdFavorites(r.crowd_favorites, items),
         blocked
       );
-      setCrowdFavorites(rankable);
+      setCrowdMap(rankable);
       setCrowdEntries(entries);
     };
 
     (async () => {
       const cached = await getCachedReviews(restaurantName);
       if (!active) return;
-      if (cached) {
-        applyReviews(cached);
-        setCrowdReady(true);
-        return;
-      }
+      if (cached) applyReviews(cached);
+      // Ready as soon as the cache check resolves — the Popular rank fires now
+      // (instant), with cached reviews folded in when present.
       setCrowdReady(true);
-      // Nothing cached → one silent background search; badges pop in when it
-      // lands. A dry or failed search just means no badges — never an error UI.
+      if (cached) return;
+      // Nothing cached → one background search; its results fold in a beat
+      // later as ★ badges + blurbs on the already-shown cards (no re-rank). A
+      // dry or failed search just means no badges — never an error UI.
       if (fetchedFor.current === restaurantName) return;
       fetchedFor.current = restaurantName;
       try {
@@ -80,7 +86,7 @@ export function useCrowdFavorites(): {
     return () => {
       active = false;
     };
-  }, [restaurantName, items, blocked, setCrowdFavorites]);
+  }, [restaurantName, items, blocked]);
 
-  return { crowdEntries, crowdReady };
+  return { crowdEntries, crowdMap, crowdReady };
 }

@@ -34,6 +34,7 @@ function pick(rank: 1 | 2 | 3, itemId: string): Pick {
     match_score: 90 - rank,
     why: 'because',
     flag: null,
+    suits: [],
     protein_g: null,
     carbs_g: null,
     fat_g: null,

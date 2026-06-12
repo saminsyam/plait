@@ -2,13 +2,16 @@
  * Single-user in-memory session for one menu scan, modeled as the AI-waiter's
  * working state. A fresh scan overwrites the last.
  *
- * Flow: camera → setScan (menu + orientation + gated candidate pool) →
- * orientation screen → narrowing (engine filters `candidates`) → setOutcome
- * (recorded questions/answers + ranked picks) → results.
+ * Flow: camera → setScan (menu + orientation + gated candidate pool) → picks.
+ * The picks screen holds TWO independent, cached result sets for the same scan:
  *
- * The deterministic hard-gate runs ONCE at scan time: blocked items never enter
- * `candidates`, and `verifyById` carries the "ask staff" reasons for the verify
- * survivors so reasoning can flag them.
+ *   • Popular — ranked off dietary profile + online crowd reviews, no questions.
+ *   • Custom  — ranked through the refine narrowing flow (recorded Q/A).
+ *
+ * Generating Custom never overwrites Popular, so the user can switch back and
+ * forth between them for free (no re-ranking). The deterministic hard-gate runs
+ * ONCE at scan time: blocked items never enter `candidates`, and `verifyById`
+ * carries the "ask staff" reasons for the verify survivors.
  */
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 
@@ -27,26 +30,22 @@ type SessionState = {
   verifyById: Record<string, string[]>;
   /** Items the hard-gate removed before ranking, with reasons (the avoid list). */
   blocked: FilteredItem[];
-  /** Narrowing questions actually asked + the user's answers (for reasoning/detail). */
-  questions: Question[];
-  answers: Answers;
   /** Chosen spice tolerance (1 mild · 2 medium · 3 hot), or null before it's set. */
   spice: number | null;
-  picks: Pick[];
   /** Whole-menu footer/header notes (mirrors menuContext.restaurant_notes). */
   restaurantNotes: string[];
-  /**
-   * item_id → crowd-favorite dish name, matched on-device from cached/fetched
-   * web reviews. Purely additive flavor: feeds ONE context line into the
-   * ranking call and badges the crowd-favorites tile. Never affects the gate.
-   */
-  crowdFavorites: Record<string, string>;
-  /**
-   * Where the current picks came from: 'instant' (ranked straight off the
-   * scan, no questions) or 'refined' (through the narrowing flow). Null until
-   * a ranking has run for this scan.
-   */
-  picksSource: 'instant' | 'refined' | null;
+
+  // ── Popular result: dietary profile + online crowd reviews, no questions.
+  popularPicks: Pick[];
+  /** True once a Popular ranking has completed for this scan. */
+  popularReady: boolean;
+
+  // ── Custom result: the refine narrowing flow's ranked picks + its Q/A.
+  customPicks: Pick[];
+  customQuestions: Question[];
+  customAnswers: Answers;
+  /** True once a Custom ranking exists (the toggle reveals the Custom view). */
+  customReady: boolean;
 };
 
 type SessionValue = SessionState & {
@@ -58,16 +57,15 @@ type SessionValue = SessionState & {
     verifyById: Record<string, string[]>;
     blocked: FilteredItem[];
   }) => void;
-  /** Record a ranking outcome (instant or refined) — questions/answers may be empty. */
-  setOutcome: (input: {
+  /** Record the Popular ranking (dietary + reviews). */
+  setPopular: (input: { spice: number; picks: Pick[] }) => void;
+  /** Record the Custom ranking (refine flow) without touching Popular. */
+  setCustom: (input: {
     questions: Question[];
     answers: Answers;
     spice: number;
     picks: Pick[];
-    source: 'instant' | 'refined';
   }) => void;
-  /** Record the review-matched crowd favorites for this scan (itemId → name). */
-  setCrowdFavorites: (map: Record<string, string>) => void;
   reset: () => void;
 };
 
@@ -78,13 +76,14 @@ const EMPTY: SessionState = {
   candidates: [],
   verifyById: {},
   blocked: [],
-  questions: [],
-  answers: {},
   spice: null,
-  picks: [],
   restaurantNotes: [],
-  crowdFavorites: {},
-  picksSource: null,
+  popularPicks: [],
+  popularReady: false,
+  customPicks: [],
+  customQuestions: [],
+  customAnswers: {},
+  customReady: false,
 };
 
 const SessionContext = createContext<SessionValue | null>(null);
@@ -108,20 +107,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }),
     []
   );
-  const setOutcome = useCallback<SessionValue['setOutcome']>(
-    ({ questions, answers, spice, picks, source }) =>
-      setState((s) => ({ ...s, questions, answers, spice, picks, picksSource: source })),
+  const setPopular = useCallback<SessionValue['setPopular']>(
+    ({ spice, picks }) =>
+      setState((s) => ({ ...s, spice, popularPicks: picks, popularReady: true })),
     []
   );
-  const setCrowdFavorites = useCallback<SessionValue['setCrowdFavorites']>(
-    (map) => setState((s) => ({ ...s, crowdFavorites: map })),
+  const setCustom = useCallback<SessionValue['setCustom']>(
+    ({ questions, answers, spice, picks }) =>
+      setState((s) => ({
+        ...s,
+        spice,
+        customQuestions: questions,
+        customAnswers: answers,
+        customPicks: picks,
+        customReady: true,
+      })),
     []
   );
   const reset = useCallback(() => setState(EMPTY), []);
 
   const value = useMemo<SessionValue>(
-    () => ({ ...state, setScan, setOutcome, setCrowdFavorites, reset }),
-    [state, setScan, setOutcome, setCrowdFavorites, reset]
+    () => ({ ...state, setScan, setPopular, setCustom, reset }),
+    [state, setScan, setPopular, setCustom, reset]
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

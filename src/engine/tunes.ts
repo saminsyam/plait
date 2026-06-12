@@ -3,14 +3,18 @@
  * `$ lower` · `Light meal` · `Safe bet` · `Surprise me`. One chip active at a
  * time; tapping it again clears back to the model's order.
  *
- * Each chip is a deterministic re-deal of the CURRENT ranked picks — pure
- * reordering on-device, zero tokens, instant (spec §2.5). Chips never pull in
- * unranked dishes and never touch the gate: they only rearrange what the
- * ranker already explained, so every card keeps its honest "why".
+ * The ranker returns a SLATE of up to 8 picks, each tagged with the tunes it
+ * genuinely suits (judged from ingredient/preparation context in the one rank
+ * call we already pay for). A chip is a deterministic SELECTION from that
+ * slate — suited picks first, ordered by the tune's own key, the rest as
+ * backfill — so tapping a chip can change which dishes appear, not just their
+ * order. Still pure on-device work: zero tokens, instant (spec §2.5), and
+ * every card keeps the ranker's honest "why". Chips never touch the gate.
  */
-import type { MenuItem, Pick } from './types';
+import type { MenuItem, Pick, TuneSuit } from './types';
 
-export type TuneId = 'price' | 'light' | 'safe' | 'surprise';
+/** Chip ids ARE the model-facing suit tags — one vocabulary, can't drift. */
+export type TuneId = TuneSuit;
 
 export const TUNES: { id: TuneId; label: string }[] = [
   { id: 'price', label: '$ lower' },
@@ -42,28 +46,34 @@ function lightKey(e: DealEntry): number {
   return carbs_g + fat_g;
 }
 
-/** Re-deal the picks for one chip (null = the ranker's original order). */
-export function applyTune(tune: TuneId | null, deal: DealEntry[]): DealEntry[] {
-  const out = [...deal];
+/** Per-tune ordering within each partition (suited, then backfill). */
+function compareFor(tune: TuneId): (a: DealEntry, b: DealEntry) => number {
   switch (tune) {
     case 'price':
-      out.sort((a, b) => priceKey(a) - priceKey(b));
-      break;
+      return (a, b) => priceKey(a) - priceKey(b);
     case 'light':
-      out.sort((a, b) => lightKey(a) - lightKey(b));
-      break;
+      return (a, b) => lightKey(a) - lightKey(b);
     case 'safe':
-      out.sort(
-        (a, b) =>
-          Number(a.needsVerify) - Number(b.needsVerify) ||
-          b.pick.match_score - a.pick.match_score
-      );
-      break;
+      return (a, b) =>
+        Number(a.needsVerify) - Number(b.needsVerify) || b.pick.match_score - a.pick.match_score;
     case 'surprise':
-      out.reverse();
-      break;
-    case null:
-      break;
+      // Deepest cuts first — generalizes the old `.reverse()` and guarantees
+      // the deal differs from the default top-3.
+      return (a, b) => b.pick.rank - a.pick.rank;
   }
-  return out;
+}
+
+/**
+ * Re-deal the slate for one chip (null = the ranker's original order). The
+ * model's contextual judgment leads: picks tagged for the tune come first,
+ * ordered by the tune's deterministic key; untagged picks backfill in the same
+ * order. With no tags at all (model noise) this degrades to a pure
+ * deterministic sort — exactly the old behavior. Never mutates the input.
+ */
+export function applyTune(tune: TuneId | null, deal: DealEntry[]): DealEntry[] {
+  if (tune === null) return [...deal];
+  const suited = deal.filter((e) => e.pick.suits.includes(tune));
+  const rest = deal.filter((e) => !e.pick.suits.includes(tune));
+  const cmp = compareFor(tune);
+  return [...suited.sort(cmp), ...rest.sort(cmp)];
 }

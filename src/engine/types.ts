@@ -73,12 +73,21 @@ export type VisionResult = {
   menu_context: VisionMenuContext;
 };
 
+/**
+ * Tune-chip affinities the ranker judges per pick from ingredient/preparation
+ * context. The chips select from the ranked slate by these tags on-device.
+ */
+export type TuneSuit = 'price' | 'light' | 'safe' | 'surprise';
+
 export type Pick = {
-  rank: 1 | 2 | 3;
+  /** 1..8 — the ranker returns a slate; the screen deals the top 3. */
+  rank: number;
   item_id: string;
   match_score: number; // 0–100
   why: string;
   flag: null | 'verify_halal' | 'contains_allergen' | 'spicier_than_stated';
+  /** Which tune chips this pick suits (empty when the model tagged none). */
+  suits: TuneSuit[];
   // Estimated macros per serving (null if model couldn't estimate)
   protein_g: number | null;
   carbs_g: number | null;

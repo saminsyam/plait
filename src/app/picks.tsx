@@ -37,13 +37,14 @@ import { Body, Eyebrow, PrimaryButton } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { bridgePick } from '@/engine/bridgePick';
 import { callDishDetail, type DishDetail } from '@/engine/callDishDetail';
-import { callReason } from '@/engine/callReason';
+import { rankFromPool } from '@/engine/rankFromPool';
 import type { FilteredItem } from '@/engine/dietaryFilter';
 import { choicesToQA, filterBySpice, nextQuestion, type EngineChoice } from '@/engine/questionEngine';
 import { refineNudge } from '@/engine/refineNudge';
 import { applyTune, TUNES, type DealEntry, type TuneId } from '@/engine/tunes';
 import type { Answers, MenuItem, Pick, Question } from '@/engine/types';
 import { useCrowdFavorites } from '@/hooks/use-crowd-favorites';
+import { logRankTrace } from '@/lib/scanCorpus';
 import { useProgressSteps, type ProgressStep } from '@/hooks/use-progress-steps';
 import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
@@ -165,20 +166,29 @@ export default function PicksScreen() {
   const session = useSession();
   const { preferences, spiceCeiling } = useProfile();
   const {
-    picks,
     items,
-    questions,
-    answers,
     restaurantNotes,
     blocked,
     candidates,
     verifyById,
     menuContext,
-    crowdFavorites,
-    picksSource,
-    setOutcome,
+    popularPicks,
+    popularReady,
+    customPicks,
+    customQuestions,
+    customAnswers,
+    customReady,
+    setPopular,
+    setCustom,
   } = session;
-  const { crowdEntries, crowdReady } = useCrowdFavorites();
+  const { crowdEntries, crowdMap, crowdReady } = useCrowdFavorites();
+
+  // Which cached result set is on screen. Popular = dietary + online reviews;
+  // Custom = the refine narrowing flow. Switching is free — both are cached.
+  const [view, setView] = useState<'popular' | 'custom'>('popular');
+  const activePicks = view === 'custom' && customReady ? customPicks : popularPicks;
+  const activeQuestions = view === 'custom' ? customQuestions : [];
+  const activeAnswers: Answers = view === 'custom' ? customAnswers : {};
 
   // Detail sheet state — one dish at a time, detail lazily fetched + cached.
   const [sheet, setSheet] = useState<DisplayEntry | null>(null);
@@ -195,7 +205,8 @@ export default function PicksScreen() {
     return () => sub.remove();
   }, []);
 
-  // ── Ranking (instant off the scan; once more if the refine sheet runs).
+  // ── Ranking. Popular runs once off the scan (waits for reviews); Custom runs
+  // when the refine sheet finishes narrowing. Each writes its own cached set.
   const { steps, onProgress, resetProgress } = useProgressSteps();
   const [rankState, setRankState] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const rankStarted = useRef(false);
@@ -203,7 +214,9 @@ export default function PicksScreen() {
     pool: MenuItem[];
     questions: Question[];
     answers: Answers;
-    source: 'instant' | 'refined';
+    mode: 'popular' | 'custom';
+    /** itemId → crowd-favorite name; review dishes still in the pool get cited. */
+    crowdMap: Record<string, string>;
   };
   const lastRank = useRef<RankRequest | null>(null);
 
@@ -222,59 +235,69 @@ export default function PicksScreen() {
       setTune(null);
       resetProgress();
       try {
-        const { pool, questions: qs, answers: ans, source } = request;
-        // One short context line for review-praised dishes still in the pool.
-        // (Gate-blocked items were never candidates, so they can't appear here.)
-        const crowdNames = pool.filter((i) => crowdFavorites[i.id]).map((i) => i.name);
-        const verifyForPool = Object.fromEntries(
-          Object.entries(verifyById).filter(([id]) => pool.some((i) => i.id === id))
-        );
-        const ranked = await callReason({
-          items: pool,
+        const { pool, questions: qs, answers: ans, mode, crowdMap: cm } = request;
+        const ranked = await rankFromPool({
+          pool,
           questions: qs,
           answers: ans,
-          userPreferences: preferences ?? '',
-          verifyById: verifyForPool,
+          preferences: preferences ?? '',
+          verifyById,
           restaurantNotes,
-          crowdFavorites: crowdNames,
+          crowdMap: cm,
           onProgress,
         });
-        setOutcome({ questions: qs, answers: ans, spice: spiceCeiling, picks: ranked, source });
+        if (mode === 'popular') {
+          setPopular({ spice: spiceCeiling, picks: ranked });
+        } else {
+          setCustom({ questions: qs, answers: ans, spice: spiceCeiling, picks: ranked });
+          setView('custom');
+        }
+        logRankTrace({
+          mode,
+          restaurant: menuContext?.restaurant_name ?? '',
+          cuisine: menuContext?.cuisine_type ?? '',
+          pool,
+          questions: qs,
+          answers: ans,
+          crowdMap: cm,
+          picks: ranked,
+        });
         setRankState('done');
       } catch {
         setRankState('error');
       }
     },
-    [crowdFavorites, verifyById, preferences, restaurantNotes, spiceCeiling, onProgress, resetProgress, setOutcome]
+    [verifyById, preferences, restaurantNotes, spiceCeiling, menuContext, onProgress, resetProgress, setPopular, setCustom]
   );
 
-  // Instant rank: the scan lands here directly; picks arrive without questions.
+  // Popular rank: the scan lands here directly and ranks instantly once the
+  // local review cache check resolves (cached reviews fold into this rank; an
+  // uncached search folds in a beat later as badges, no re-rank).
   const hasScan = !!menuContext && items.length > 0;
   useEffect(() => {
     if (rankStarted.current) return;
     if (!hasScan || candidates.length === 0) return;
-    // Wait for the (local, fast) review-cache check so cached crowd favorites
-    // make it into the very first ranking call instead of racing it.
     if (!crowdReady) return;
-    // A ranking already ran for this scan (e.g. remount on web reload).
-    if (picks.length > 0 || picksSource !== null) return;
+    if (popularReady) return; // already ranked (e.g. remount on web reload)
     rankStarted.current = true;
     void runRank({
       pool: filterBySpice(candidates, spiceCeiling),
       questions: [],
       answers: {},
-      source: 'instant',
+      mode: 'popular',
+      crowdMap,
     });
-  }, [hasScan, candidates, spiceCeiling, picks.length, picksSource, crowdReady, runRank]);
+  }, [hasScan, candidates, spiceCeiling, popularReady, crowdReady, crowdMap, runRank]);
 
-  // The refine sheet hands back a narrowed pool + recorded choices → ONE re-rank.
+  // The refine sheet hands back a narrowed pool + recorded choices → the Custom
+  // rank, which never touches the cached Popular result.
   const onRefineDone = useCallback(
     (pool: MenuItem[], choices: EngineChoice[]) => {
       setRefineOpen(false);
       const qa = choicesToQA(choices);
-      void runRank({ pool, questions: qa.questions, answers: qa.answers, source: 'refined' });
+      void runRank({ pool, questions: qa.questions, answers: qa.answers, mode: 'custom', crowdMap });
     },
-    [runRank]
+    [runRank, crowdMap]
   );
 
   // Guard: no scan in progress → home. <Redirect> (not router.replace in an
@@ -288,9 +311,9 @@ export default function PicksScreen() {
   const halalCertified = restaurantNotes.some((n) => /halal/i.test(n));
   const trustNotes = restaurantNotes.filter((n) => /halal|kosher/i.test(n));
 
-  const maxProtein = Math.max(1, ...picks.map((p) => p.protein_g ?? 0));
-  const maxCarbs = Math.max(1, ...picks.map((p) => p.carbs_g ?? 0));
-  const maxFat = Math.max(1, ...picks.map((p) => p.fat_g ?? 0));
+  const maxProtein = Math.max(1, ...activePicks.map((p) => p.protein_g ?? 0));
+  const maxCarbs = Math.max(1, ...activePicks.map((p) => p.carbs_g ?? 0));
+  const maxFat = Math.max(1, ...activePicks.map((p) => p.fat_g ?? 0));
 
   const pickNeedsVerify = (p: Pick): boolean => {
     const flag = p.flag === 'verify_halal' && halalCertified ? null : p.flag;
@@ -302,13 +325,13 @@ export default function PicksScreen() {
     if (entry.kind === 'stretch') return 'stretch';
     if (entry.needsVerify) return 'verify';
     if (entry.pick.flag === 'spicier_than_stated') return 'spice';
-    if (crowdFavorites[entry.item.id]) return 'crowd';
+    if (crowdMap[entry.item.id]) return 'crowd';
     return null;
   };
 
   /** Reviewer blurb for a dish, when the loaded crowd favorites include it. */
   const crowdBlurbFor = (item: MenuItem): string | null => {
-    const name = crowdFavorites[item.id];
+    const name = crowdMap[item.id];
     if (!name) return null;
     return crowdEntries.find((f) => f.name === name)?.blurb || null;
   };
@@ -347,8 +370,8 @@ export default function PicksScreen() {
           pick: entry.pick,
           item: entry.item,
           preferences: preferences ?? '',
-          questions,
-          answers,
+          questions: activeQuestions,
+          answers: activeAnswers,
         });
         detailCache.current[id] = d;
         if (activeIdRef.current === id) setDetail(d);
@@ -380,16 +403,16 @@ export default function PicksScreen() {
   // Refinement availability + the deterministic "would questions help?" nudge
   // (the nudge text, when present, becomes the refine link's label).
   const trimmedPool = filterBySpice(candidates, spiceCeiling);
-  const refinable = picks.length > 0 && nextQuestion(trimmedPool, new Set()) !== null;
+  const refinable = popularReady && nextQuestion(trimmedPool, new Set()) !== null;
   const nudge =
-    refinable && picksSource === 'instant' && rankState !== 'running'
-      ? refineNudge({ poolSize: trimmedPool.length, preferencesText: preferences ?? '', picks })
+    refinable && !customReady && rankState !== 'running'
+      ? refineNudge({ poolSize: trimmedPool.length, preferencesText: preferences ?? '', picks: popularPicks })
       : null;
 
-  // ── Assemble the displayed deal: the active tune chip re-orders the ranked
-  // picks deterministically; adventurous mode flips the first contender into
-  // the deterministic stretch pick.
-  const rankedDeal: DealEntry[] = picks
+  // ── Assemble the displayed deal from the ACTIVE view: the active tune chip
+  // re-orders the ranked picks deterministically; adventurous mode flips the
+  // first contender into the deterministic stretch pick.
+  const rankedDeal: DealEntry[] = activePicks
     .map((p) => {
       const item = byId.get(p.item_id);
       return item ? { pick: p, item, needsVerify: pickNeedsVerify(p) } : null;
@@ -399,7 +422,7 @@ export default function PicksScreen() {
   const orderedEntries: DisplayEntry[] = orderedDeal.map((e) => ({ kind: 'pick', ...e }));
 
   const stretch = adventurous
-    ? bridgePick({ picks, candidates, verifyById, signatureIds: o.signature_item_ids, byId })
+    ? bridgePick({ picks: activePicks, candidates, verifyById, signatureIds: o.signature_item_ids, byId })
     : null;
   const hero = orderedEntries[0] ?? null;
   const contenders: DisplayEntry[] = stretch
@@ -407,12 +430,24 @@ export default function PicksScreen() {
     : orderedEntries.slice(1, 3);
 
   // Re-deal the stagger animation whenever the visible set changes.
-  const dealKey = `${orderedDeal.map((e) => e.item.id).join('·')}·${adventurous}`;
+  const dealKey = `${view}·${orderedDeal.map((e) => e.item.id).join('·')}·${adventurous}`;
 
   const toggleTune = (id: TuneId) => {
     if (rankState === 'running') return;
     setLocked(false);
     setTune((t) => (t === id ? null : id));
+  };
+
+  // Switching Popular ⇄ Custom is free (both cached). Reset the per-view
+  // controls so each set reads cleanly from the top.
+  const switchView = (next: 'popular' | 'custom') => {
+    if (next === view || rankState === 'running') return;
+    if (!reduceMotion) LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    closeSheet();
+    setTune(null);
+    setLocked(false);
+    setAdventurous(false);
+    setView(next);
   };
 
   const toggleAdventurous = () => {
@@ -482,6 +517,27 @@ export default function PicksScreen() {
           </View>
         ))}
 
+        {/* ── Popular ⇄ Custom segmented toggle. Appears once a Custom result
+            exists; switching between the two cached sets is free (no re-rank). */}
+        {customReady && rankState !== 'running' && (
+          <View style={styles.viewToggle}>
+            <Pressable
+              onPress={() => switchView('popular')}
+              style={[styles.viewSeg, view === 'popular' && styles.viewSegOn]}>
+              <Text style={[styles.viewSegText, view === 'popular' && styles.viewSegTextOn]}>
+                ★ Popular
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => switchView('custom')}
+              style={[styles.viewSeg, view === 'custom' && styles.viewSegOn]}>
+              <Text style={[styles.viewSegText, view === 'custom' && styles.viewSegTextOn]}>
+                Custom
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
         {candidates.length === 0 && (
           <Body style={styles.emptyPicks}>
             Nothing on this menu cleared your hard restrictions. Open the gate
@@ -529,12 +585,17 @@ export default function PicksScreen() {
           </View>
         )}
 
-        {/* The narrowing flow, demoted to one quiet offer — the deterministic
-            nudge supplies the label when it fires; hidden when no facet could
-            split the (spice-trimmed) pool anyway. */}
+        {/* The narrowing flow as a quiet offer. Before a Custom result exists
+            it's the entry point ("refine for a custom order"); after, it lets
+            the user re-run the narrowing to rebuild their Custom set. Hidden
+            when no facet could split the (spice-trimmed) pool anyway. */}
         {refinable && rankState !== 'running' && (
           <Pressable onPress={() => setRefineOpen(true)} hitSlop={8}>
-            <Text style={styles.refineLink}>{nudge ?? 'Not quite? Refine my picks'} →</Text>
+            <Text style={styles.refineLink}>
+              {customReady
+                ? 'Redo your custom order →'
+                : (nudge ?? 'Want a custom order? Refine my picks') + ' →'}
+            </Text>
           </Pressable>
         )}
 
@@ -546,7 +607,7 @@ export default function PicksScreen() {
       </ScrollView>
 
       {/* ── Persistent tune chips — deterministic re-deals, zero tokens. */}
-      {picks.length > 1 && (
+      {activePicks.length > 1 && rankState !== 'running' && (
         <View style={styles.tuneBar}>
           {TUNES.map((t) => {
             const on = tune === t.id;
@@ -554,11 +615,7 @@ export default function PicksScreen() {
               <Pressable
                 key={t.id}
                 onPress={() => toggleTune(t.id)}
-                style={[
-                  styles.tuneChip,
-                  on && styles.tuneChipActive,
-                  rankState === 'running' && { opacity: 0.4 },
-                ]}>
+                style={[styles.tuneChip, on && styles.tuneChipActive]}>
                 <Text
                   style={[styles.tuneChipText, on && styles.tuneChipTextActive]}
                   numberOfLines={1}>
@@ -830,6 +887,26 @@ const styles = StyleSheet.create({
   modeToggleOn: { backgroundColor: Plait.color.plum, borderStyle: 'solid' },
   modeToggleText: { fontFamily: Plait.font.bodyBold, fontSize: 12, color: Plait.color.plum },
   modeToggleTextOn: { color: '#FFFFFF' },
+
+  // Popular ⇄ Custom segmented toggle
+  viewToggle: {
+    flexDirection: 'row',
+    backgroundColor: Plait.color.card,
+    borderWidth: 1,
+    borderColor: Plait.color.line,
+    borderRadius: Plait.radius.pill,
+    padding: 3,
+    gap: 3,
+  },
+  viewSeg: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderRadius: Plait.radius.pill,
+  },
+  viewSegOn: { backgroundColor: Plait.color.green },
+  viewSegText: { fontFamily: Plait.font.bodySemiBold, fontSize: 13, color: Plait.color.inkSoft },
+  viewSegTextOn: { color: '#FFFFFF' },
 
   // Gate line
   gateLine: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 2 },

@@ -16,6 +16,7 @@ const pick = (rank: 1 | 2 | 3, score: number): Pick => ({
   match_score: score,
   why: 'because',
   flag: null,
+  suits: [],
   protein_g: null,
   carbs_g: null,
   fat_g: null,

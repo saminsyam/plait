@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>plAIt · Sushi 2.1 — Status &amp; Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Public+Sans:wght@400;600;700&family=Spline+Sans+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #F7F5F0;
+    --card: #FFFFFF;
+    --ink: #1B1E1B;
+    --ink-soft: #5A615A;
+    --ink-faint: #9AA09A;
+    --line: #E4E1D8;
+    --green: #2E6B4F;
+    --green-soft: #E3EEE8;
+    --amber: #B07916;
+    --amber-soft: #F6EDDA;
+    --plum: #6D4A7C;
+    --plum-soft: #EEE6F2;
+    --danger: #B3422E;
+    --display: 'Fraunces', serif;
+    --body: 'Public Sans', sans-serif;
+    --mono: 'Spline Sans Mono', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--body);
+    line-height: 1.55;
+    padding: 40px 20px 80px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  /* ── Header */
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+  .logo { font-family: var(--display); font-weight: 600; font-size: 34px; }
+  .logo .ai { color: var(--green); }
+  .version { font-family: var(--mono); font-size: 13px; color: var(--ink-faint); }
+  .tagline { color: var(--ink-soft); font-size: 15px; margin-bottom: 28px; }
+
+  /* ── Tabs */
+  .tabs {
+    display: flex; gap: 4px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px;
+    margin-bottom: 36px; position: sticky; top: 12px; z-index: 5;
+    box-shadow: 0 8px 24px rgba(27,30,27,0.06);
+  }
+  .tab {
+    flex: 1; text-align: center; padding: 10px 8px; border-radius: 999px;
+    font-weight: 600; font-size: 14px; color: var(--ink-soft);
+    cursor: pointer; border: none; background: transparent; font-family: var(--body);
+    transition: background .15s, color .15s;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.active { background: var(--green); color: #fff; }
+  .panel { display: none; }
+  .panel.active { display: block; animation: rise .35s ease; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  /* ── Shared blocks */
+  .eyebrow {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px;
+  }
+  h2 { font-family: var(--display); font-weight: 600; font-size: 27px; margin-bottom: 6px; }
+  .lede { color: var(--ink-soft); font-size: 15px; margin-bottom: 26px; max-width: 64ch; }
+  section { margin-bottom: 44px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+    padding: 20px 22px;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .feature h3 { font-size: 15.5px; font-weight: 700; margin-bottom: 5px; display: flex; align-items: center; gap: 8px; }
+  .feature p { font-size: 13.5px; color: var(--ink-soft); }
+  .chip {
+    display: inline-block; font-size: 10.5px; font-weight: 600; padding: 3px 9px;
+    border-radius: 999px; vertical-align: middle;
+  }
+  .chip.free   { color: var(--green); background: var(--green-soft); }
+  .chip.model  { color: var(--plum); background: var(--plum-soft); }
+  .chip.maybe  { color: var(--amber); background: var(--amber-soft); }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+
+  /* ── Pipeline */
+  .stage { display: flex; gap: 16px; }
+  .stage + .stage { margin-top: 0; }
+  .rail { display: flex; flex-direction: column; align-items: center; width: 44px; flex-shrink: 0; }
+  .dot {
+    width: 44px; height: 44px; border-radius: 50%; background: var(--card);
+    border: 1.5px solid var(--line); display: flex; align-items: center;
+    justify-content: center; font-size: 19px; flex-shrink: 0;
+  }
+  .rail .cord { width: 2px; flex: 1; background: var(--line); margin: 4px 0; min-height: 18px; }
+  .stage:last-child .cord { display: none; }
+  .stage-body { padding-bottom: 26px; flex: 1; }
+  .stage-body h3 { font-family: var(--display); font-weight: 600; font-size: 18.5px; margin-bottom: 2px; }
+  .stage-meta { font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); margin-bottom: 7px; }
+  .stage-body p { font-size: 14px; color: var(--ink-soft); max-width: 62ch; }
+  .stage-body p + p { margin-top: 6px; }
+
+  .principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .principle { border-left: 3px solid var(--green); padding: 4px 0 4px 14px; }
+  .principle.amber { border-left-color: var(--amber); }
+  .principle.plum { border-left-color: var(--plum); }
+  .principle b { display: block; font-size: 14px; margin-bottom: 2px; }
+  .principle span { font-size: 13px; color: var(--ink-soft); }
+
+  /* ── Roadmap */
+  .roadcol h3 { font-family: var(--display); font-size: 19px; font-weight: 600; margin: 0 0 4px; }
+  .horizon { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 14px; }
+  .horizon.now { color: var(--green); } .horizon.next { color: var(--amber); } .horizon.later { color: var(--plum); }
+  .road-item { padding: 12px 0; border-top: 1px solid var(--line); }
+  .road-item b { font-size: 14px; }
+  .road-item p { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
+  .note {
+    margin-top: 26px; background: var(--amber-soft); border-radius: 14px;
+    padding: 14px 18px; font-size: 13px; color: var(--ink);
+  }
+
+  footer { margin-top: 56px; text-align: center; font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">pl<span class="ai">AI</span>t</div>
+    <div class="version">Sushi 2.1 · June 2026</div>
+  </header>
+  <p class="tagline">Point your camera at any menu — get the right order for <em>you</em>, with safety you can audit.</p>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-panel="now">Where we are</button>
+    <button class="tab" data-panel="engine">How the engine works</button>
+    <button class="tab" data-panel="future">Future plans</button>
+  </nav>
+
+  <!-- ════════════════════ TAB 1 · WHERE WE ARE ════════════════════ -->
+  <div class="panel active" id="now">
+    <section>
+      <div class="eyebrow">the golden path</div>
+      <h2>Open → photograph → eat. Two taps.</h2>
+      <p class="lede">The camera <em>is</em> the home screen. One photo runs the whole pipeline under a single
+      live-status loader, and the picks screen lands fully formed — hero pick, two contenders, done.
+      Everything that isn't the golden path lives behind one corner ☰ menu.</p>
+      <div class="grid">
+        <div class="card feature"><h3>📷 Camera-as-home</h3><p>Frame the menu, tap the shutter (or upload from the library). No feeds, no dashboards — the app opens ready to work.</p></div>
+        <div class="card feature"><h3>🔥 One honest loader</h3><p>Real pipeline stages with live details and per-step timers — "23 dishes spotted", "writing pick #2…". Never a fake timeline; navigation fires the moment the work truly finishes.</p></div>
+        <div class="card feature"><h3>🏆 One-page picks</h3><p>"Our pick for you" hero card with hold-to-lock, two compact contenders, and a why-this-pick detail sheet with tap-to-explain for unfamiliar terms.</p></div>
+        <div class="card feature"><h3>🛡️ The gate line</h3><p>"3 dishes hidden for you — pork, shrimp paste · view." Blocked dishes are never silently dropped; trust is made visible and auditable.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="eyebrow">two results, cached</div>
+      <h2>Popular ⇄ Custom</h2>
+      <p class="lede">The first deal is <b>Popular</b>: dietary profile + what online reviewers actually praise.
+      Run the refine sheet's narrowing questions and you get <b>Custom</b>. Both stay cached per scan —
+      the segmented toggle switches between them instantly, for free.</p>
+      <div class="grid">
+        <div class="card feature"><h3>⭐ Crowd favorites <span class="chip free">the swap</span></h3><p>Cached reviews fold straight into the first ranking. Uncached? The picks render instantly anyway and one background search folds in ★ badges a beat later — no re-rank, no shuffle.</p></div>
+        <div class="card feature"><h3>✎ Refine sheet</h3><p>On-device narrowing questions (zero tokens) shrink the pool; one re-rank builds your Custom order without ever touching the cached Popular result.</p></div>
+        <div class="card feature"><h3>🎛️ Intelligent tune chips <span class="chip free">0 tokens/tap</span></h3><p>$ lower · Light meal · Safe bet · Surprise me. The ranker returns a slate of up to 8 picks tagged with which tunes each suits — a chip re-deals the whole hand from the slate, instantly.</p></div>
+        <div class="card feature"><h3>✦ Adventurous mode</h3><p>One toggle flips a contender into a deterministic "stretch pick" — a safe-but-bolder dish sharing a flavor lane with your matches, dashed in plum.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="eyebrow">also shipped</div>
+      <div class="card">
+        <div class="grid">
+          <div class="feature"><h3>🔒 Dietary profile</h3><p>Free-text preferences smart-parsed into machine-checkable hard constraints + a once-asked spice ceiling. Stored on device.</p></div>
+          <div class="feature"><h3>📊 Hidden stats screen</h3><p>Tap the version label 5× — full API ledger: every call, tokens, and real dollar cost, grouped by purpose, with a reset counter.</p></div>
+          <div class="feature"><h3>🎨 v2 "paper" design system</h3><p>Fraunces · Public Sans · Spline Sans Mono on warm paper, with green/amber/plum semantics (good / verify / adventurous) locked app-wide.</p></div>
+          <div class="feature"><h3>✅ Verified</h3><p>75 unit tests across the engine (gate, tunes, bridge pick, nudges, review matching) — tsc and eslint clean.</p></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ════════════════════ TAB 2 · ENGINE ════════════════════ -->
+  <div class="panel" id="engine">
+    <section>
+      <div class="eyebrow">design principles</div>
+      <h2>The shape of the engine</h2>
+      <p class="lede">A UI-free engine package (<span class="mono">src/engine/</span>) does all the thinking.
+      The model is consulted exactly twice on the golden path; everything the user touches afterwards is
+      deterministic, on-device, and instant.</p>
+      <div class="principles">
+        <div class="principle"><b>Safety is never delegated</b><span>A deterministic hard gate enforces allergens and religious rules. The model ranks only pre-cleared dishes.</span></div>
+        <div class="principle plum"><b>Pay for judgment once</b><span>One vision read, one rank. Tunes, stretch picks, and view switches re-use that judgment for free.</span></div>
+        <div class="principle amber"><b>Honest by construction</b><span>Live loaders show real stages; blocked dishes are listed with reasons; every cent is in the ledger.</span></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="eyebrow">the pipeline · one scan</div>
+      <div class="card" style="padding: 26px 24px 8px;">
+
+        <div class="stage">
+          <div class="rail"><div class="dot">📐</div><div class="cord"></div></div>
+          <div class="stage-body">
+            <h3>Photo prep <span class="chip free">on-device</span></h3>
+            <div class="stage-meta">resize + compress</div>
+            <p>The shot is resized for a fast, cheap read before any tokens are spent.</p>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="rail"><div class="dot">📖</div><div class="cord"></div></div>
+          <div class="stage-body">
+            <h3>Vision read <span class="chip model">model call</span></h3>
+            <div class="stage-meta">vision.read</div>
+            <p>One multimodal call reads the entire menu into structured dishes — name, price, ingredients,
+            flavor profile, spice level, dietary tags, a rough protein estimate — plus menu context:
+            restaurant name, cuisine, signature items, and whole-menu notes like a halal certification.</p>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="rail"><div class="dot">🛡️</div><div class="cord"></div></div>
+          <div class="stage-body">
+            <h3>Hard dietary gate <span class="chip free">deterministic · 0 tokens</span></h3>
+            <div class="stage-meta">applyHardGate · runs ONCE per scan</div>
+            <p>Structured constraints (parsed once from the user's free-text profile) split the menu three ways:
+            <b>allowed</b>, <b>verify</b> (uncertain — carries "ask staff" reasons), and <b>blocked</b>.
+            Blocked dishes never enter any candidate pool, any ranking prompt, or any review citation — by construction.</p>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="rail"><div class="dot">⭐</div><div class="cord"></div></div>
+          <div class="stage-body">
+            <h3>Crowd reviews <span class="chip free">cache first</span> <span class="chip maybe">1 search if cold</span></h3>
+            <div class="stage-meta">reviews.fetch · fuzzy match on-device</div>
+            <p>The review cache is checked for free. A cache hit folds reviewer favorites straight into the
+            ranking; a miss triggers exactly one background web search whose results appear later as ★ badges
+            on the already-dealt cards. Matching review dish names to menu items is pure on-device string work.</p>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="rail"><div class="dot">👨‍🍳</div><div class="cord"></div></div>
+          <div class="stage-body">
+            <h3>The rank <span class="chip model">model call</span></h3>
+            <div class="stage-meta">reason.rank · runs inside the same loader</div>
+            <p>One call ranks the gated pool against the user's preferences, restaurant notes, and crowd
+            favorites — returning a slate of up to 8 picks, each with a specific one-line "why", a match
+            score, macro estimates with confidence, safety flags, and <b>tune affinities</b>: which of the
+            four tune chips each pick genuinely suits, judged from ingredients and preparation.</p>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="rail"><div class="dot">⚡</div><div class="cord"></div></div>
+          <div class="stage-body">
+            <h3>Everything after is instant <span class="chip free">0 tokens</span></h3>
+            <div class="stage-meta">tunes · bridgePick · spice trim · view toggle</div>
+            <p>Tune chips select a new top-3 from the slate (model tags first, deterministic keys as
+            tie-break and backfill). Adventurous mode computes a stretch pick from shared flavor lanes.
+            Popular ⇄ Custom switches between cached results. None of it costs a token or a spinner.</p>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="rail"><div class="dot">🍽️</div><div class="cord"></div></div>
+          <div class="stage-body">
+            <h3>On demand only <span class="chip model">lazy model calls</span></h3>
+            <div class="stage-meta">dish.detail · refine → one custom re-rank</div>
+            <p>Tapping "why?" fetches a deeper dish explanation (with tap-to-explain terms) once, then caches it.
+            Finishing the refine sheet's on-device questions triggers the only other rank — the Custom order.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section>
+      <div class="eyebrow">accounting</div>
+      <div class="card feature">
+        <h3>💰 Every call is metered</h3>
+        <p>A client-side usage ledger records each API call's label, token counts, web searches, and real dollar
+        cost — surfaced in the hidden stats screen. A typical scan: one vision read, one rank, and at most one
+        review search; dish details and the custom re-rank only when asked for.</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- ════════════════════ TAB 3 · FUTURE ════════════════════ -->
+  <div class="panel" id="future">
+    <section>
+      <div class="eyebrow">roadmap</div>
+      <h2>Where Sushi 2.x goes next</h2>
+      <p class="lede">Candidates drawn from the v2 spec's deferred items and design seams already built into the
+      app — ordered by how close they are, not promises.</p>
+
+      <div class="grid" style="align-items: start;">
+        <div class="card roadcol">
+          <div class="horizon now">Near · finish the loop</div>
+          <div class="road-item"><b>Taste memory</b><p>Hold-to-lock already says "saved to your taste profile" — make it true: persist locked picks and post-meal feedback, and feed them into the next scan's ranking context.</p></div>
+          <div class="road-item"><b>Outcome check-in</b><p>A quiet "how was it?" the next time the app opens — one tap, closing the recommend → eat → learn loop.</p></div>
+          <div class="road-item"><b>Supabase persistence</b><p>Move the profile and taste history off-device so they survive reinstalls and sync across devices (explicitly deferred out of 2.1).</p></div>
+          <div class="road-item"><b>TestFlight round</b><p>Real menus, real lighting, real restaurants — validate the one-loader flow and tune-chip slate breadth on device.</p></div>
+        </div>
+
+        <div class="card roadcol">
+          <div class="horizon next">Next · sharpen the engine</div>
+          <div class="road-item"><b>Budget &amp; protein tunes</b><p>Revive the pre-redesign budget slider and protein-per-$ logic as first-class tune chips on the slate system.</p></div>
+          <div class="road-item"><b>Large-menu sectioning</b><p>Menus that overflow one read today ask for a re-shot; instead, read by section and merge — no user-visible failure.</p></div>
+          <div class="road-item"><b>Online menu lookup</b><p>Re-integrate the no-photo path: name a restaurant, pull its menu from the web, and run the same gate + rank pipeline on it.</p></div>
+          <div class="road-item"><b>Prompt caching</b><p>When the lookup loop returns, cache its repeated context (~5–30% savings on that flow — the one place caching pays).</p></div>
+        </div>
+
+        <div class="card roadcol">
+          <div class="horizon later">Later · widen the table</div>
+          <div class="road-item"><b>Group ordering</b><p>Two profiles, one menu: picks that respect everyone's gates and find the shared-dish sweet spot.</p></div>
+          <div class="road-item"><b>Multi-photo scans</b><p>Stitch several shots (drinks page, specials board) into one candidate pool.</p></div>
+          <div class="road-item"><b>Wider review sources</b><p>Blend more review providers into crowd favorites, with the same on-device matching and gate rules.</p></div>
+          <div class="road-item"><b>Localization</b><p>Read non-English menus and explain dishes in the user's language — tap-to-explain is already the natural seam.</p></div>
+        </div>
+      </div>
+
+      <div class="note">⚖️ <b>Standing constraints carry forward:</b> safety stays deterministic and on-device, the model
+      is paid for judgment as few times as possible, loaders never lie, and every token lands in the ledger.</div>
+    </section>
+  </div>
+
+  <footer>plAIt · Sushi 2.1 · engine: src/engine (UI-free) · client-side pipeline · generated June 2026</footer>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('.tab');
+  const panels = document.querySelectorAll('.panel');
+  function show(id) {
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.panel === id));
+    panels.forEach(p => p.classList.toggle('active', p.id === id));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  tabs.forEach(t => t.addEventListener('click', () => show(t.dataset.panel)));
+  // ← / → arrow keys walk the tabs, presentation-style.
+  document.addEventListener('keydown', (e) => {
+    const order = ['now', 'engine', 'future'];
+    const cur = order.indexOf(document.querySelector('.tab.active').dataset.panel);
+    if (e.key === 'ArrowRight') show(order[Math.min(cur + 1, order.length - 1)]);
+    if (e.key === 'ArrowLeft') show(order[Math.max(cur - 1, 0)]);
+  });
+</script>
+</body>
+</html>

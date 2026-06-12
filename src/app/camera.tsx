@@ -17,8 +17,13 @@ import { Plait } from '@/constants/plait-theme';
 import { APP_VERSION } from '@/constants/version';
 import { useProgressSteps } from '@/hooks/use-progress-steps';
 import { callVision } from '@/engine/callVision';
+import { getCachedReviews } from '@/engine/callReviews';
 import { applyHardGate } from '@/engine/dietaryFilter';
 import { prepareMenuImage } from '@/engine/image';
+import { gateCrowdFavorites, matchCrowdFavorites } from '@/engine/matchReviews';
+import { filterBySpice } from '@/engine/questionEngine';
+import { rankFromPool } from '@/engine/rankFromPool';
+import { beginScanTrace, logRankTrace } from '@/lib/scanCorpus';
 import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
 
@@ -32,9 +37,18 @@ function CornerMenu({ dark }: { dark?: boolean }) {
   const router = useRouter();
   const { preferences } = useProfile();
   const [open, setOpen] = useState(false);
+  // Hidden developer door: 5 taps on the version label opens token-usage stats.
+  const versionTaps = useRef(0);
   const go = (path: string) => {
     setOpen(false);
     router.push(path as Parameters<typeof router.push>[0]);
+  };
+  const tapVersion = () => {
+    versionTaps.current += 1;
+    if (versionTaps.current >= 5) {
+      versionTaps.current = 0;
+      go('/stats');
+    }
   };
 
   return (
@@ -54,7 +68,9 @@ function CornerMenu({ dark }: { dark?: boolean }) {
               <Text style={menu.logo}>
                 pl<Text style={{ color: Plait.color.green }}>AI</Text>t
               </Text>
-              <Text style={menu.version}>{APP_VERSION}</Text>
+              <Pressable onPress={tapVersion} hitSlop={8}>
+                <Text style={menu.version}>{APP_VERSION}</Text>
+              </Pressable>
             </View>
             <MenuRow
               icon="✎"
@@ -110,7 +126,7 @@ function messageForError(e: unknown): string {
 export default function CameraScreen() {
   const router = useRouter();
   const session = useSession();
-  const { hardConstraints } = useProfile();
+  const { hardConstraints, preferences, spiceCeiling } = useProfile();
   const cameraRef = useRef<CameraView>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [shot, setShot] = useState<Shot | null>(null);
@@ -221,6 +237,62 @@ export default function CameraScreen() {
           verifyById,
           blocked: gate.blocked,
         });
+        // Corpus: capture the read + gate split (fire-and-forget telemetry).
+        beginScanTrace({
+          items,
+          menuContext: menu_context,
+          candidates,
+          verifyById,
+          blocked: gate.blocked,
+          preferences: preferences ?? '',
+          spiceCeiling,
+        });
+
+        // Run the instant Popular rank here, under the SAME loader, so the
+        // picks screen lands fully formed (no second loading screen). We only
+        // fold in CACHED reviews — an uncached review search still happens
+        // lazily on the picks screen and folds in ★ badges a beat later ("the
+        // swap"). A rank failure degrades to the picks retry path: swallow it
+        // and navigate anyway (popularReady stays false there).
+        if (candidates.length > 0) {
+          try {
+            const restaurantName = menu_context.restaurant_name.trim();
+            let crowdMap: Record<string, string> = {};
+            if (restaurantName) {
+              const cached = await getCachedReviews(restaurantName);
+              if (cached) {
+                crowdMap = gateCrowdFavorites(
+                  matchCrowdFavorites(cached.crowd_favorites, items),
+                  gate.blocked
+                ).rankable;
+              }
+            }
+            const pool = filterBySpice(candidates, spiceCeiling);
+            const picks = await rankFromPool({
+              pool,
+              questions: [],
+              answers: {},
+              preferences: preferences ?? '',
+              verifyById,
+              restaurantNotes: menu_context.restaurant_notes,
+              crowdMap,
+              onProgress,
+            });
+            session.setPopular({ spice: spiceCeiling, picks });
+            logRankTrace({
+              mode: 'popular',
+              restaurant: menu_context.restaurant_name,
+              cuisine: menu_context.cuisine_type,
+              pool,
+              questions: [],
+              answers: {},
+              crowdMap,
+              picks,
+            });
+          } catch {
+            // Ranking failed — the picks screen will retry with its own status.
+          }
+        }
         setDone(true);
       } catch (e) {
         setBusy(false);

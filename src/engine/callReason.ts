@@ -4,24 +4,36 @@
  */
 import { callMessagesStream, parseJson } from './anthropic';
 import type { OnProgress } from './progress';
-import type { Answers, MenuItem, Pick, Question } from './types';
+import type { Answers, MenuItem, Pick, Question, TuneSuit } from './types';
+
+const TUNE_SUITS: readonly TuneSuit[] = ['price', 'light', 'safe', 'surprise'];
 
 const SYSTEM = `You are a friendly menu recommendation engine, like a great waiter.
 Given menu items, the user's question answers, and free-text dietary
-preferences, return exactly 3 ranked picks.
+preferences, return between 3 and 8 ranked picks — as many as genuinely fit,
+up to 8. The user sees the top 3 first; the rest power instant "tune" filters.
 
 For each pick return JSON matching this shape exactly:
 {
-  "rank": 1|2|3,
+  "rank": number,               // 1..8, best first
   "item_id": string,
   "match_score": number,        // 0–100
   "why": string,                // one sentence, conversational, specific to THIS dish
   "flag": null | "verify_halal" | "contains_allergen" | "spicier_than_stated",
+  "suits": string[],            // zero or more of: "price" | "light" | "safe" | "surprise"
   "protein_g": number | null,   // estimated grams per serving, null if unknown
   "carbs_g": number | null,
   "fat_g": number | null,
   "confidence": "high" | "medium" | "low"  // confidence in the macro estimates
 }
+
+"suits" tags which tune filters this pick genuinely fits — judge from the
+ingredients and preparation context, not just the numbers:
+- "price": strong value; the cheaper end of this menu for what you get
+- "light": a genuinely lighter meal — lower carbs/fat, fresh or lean preparation
+- "safe": crowd-pleasing, no verification worries, closest to the stated preferences
+- "surprise": adventurous or unexpected for this user, while still within their preferences
+Tag honestly and sparingly — an empty list is fine for a pick that fits no filter.
 
 Confidence guide: high = nutrition info stated on menu, medium = can infer from
 ingredients, low = rough estimate from dish type only.
@@ -46,7 +58,8 @@ Rules:
 - For a needs_verification item whose reason concerns halal/kosher, set
   flag = "verify_halal".
 - "why" must name specific ingredients, not generic phrases
-- If fewer than 3 items match cleanly, return 1 or 2 — don't force bad picks
+- Don't force bad picks: on a small or poorly matching menu, return fewer —
+  even 1 or 2 — rather than padding the slate
 - If a restaurant note states the kitchen is halal- or kosher-certified, you do NOT
   need to set flag = "verify_halal" for its dishes — the certification covers it
 
@@ -157,7 +170,7 @@ export async function callReason({
   const { text: raw, stopReason } = await callMessagesStream({
     system: SYSTEM,
     label: 'reason.rank',
-    maxTokens: 2000,
+    maxTokens: 3500,
     content: [
       {
         type: 'text',
@@ -172,7 +185,7 @@ export async function callReason({
     // tells the user which pick is being written right now.
     onText: (text) => {
       const count = (text.match(/"item_id"/g) ?? []).length;
-      if (count !== lastPick && count >= 1 && count <= 3) {
+      if (count !== lastPick && count >= 1 && count <= 8) {
         lastPick = count;
         onProgress?.({
           id: 'rank',
@@ -190,25 +203,28 @@ export async function callReason({
   if (!Array.isArray(picks) || picks.length === 0) {
     throw new Error('No suitable picks were returned for this menu.');
   }
-  onProgress?.({
-    id: 'rank',
-    icon: '👨‍🍳',
-    label: 'Picks ranked',
-    detail: `top ${Math.min(picks.length, 3)} ready`,
-    status: 'done',
-  });
-
   const validIds = new Set(items.map((i) => i.id));
-  return picks
+  const slate = picks
     .filter((p) => validIds.has(p.item_id))
     .sort((a, b) => a.rank - b.rank)
-    .slice(0, 3)
+    .slice(0, 8)
     .map((p) => ({
       ...p,
       // Coerce nulls in case model omits fields
+      suits: Array.isArray(p.suits)
+        ? p.suits.filter((s): s is TuneSuit => TUNE_SUITS.includes(s))
+        : [],
       protein_g: typeof p.protein_g === 'number' ? p.protein_g : null,
       carbs_g: typeof p.carbs_g === 'number' ? p.carbs_g : null,
       fat_g: typeof p.fat_g === 'number' ? p.fat_g : null,
       confidence: p.confidence ?? null,
     }));
+  onProgress?.({
+    id: 'rank',
+    icon: '👨‍🍳',
+    label: 'Picks ranked',
+    detail: `${slate.length} ranked, top ${Math.min(slate.length, 3)} dealt`,
+    status: 'done',
+  });
+  return slate;
 }
