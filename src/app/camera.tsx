@@ -1,7 +1,7 @@
 /**
  * Camera IS home (v2 spec §3): open app → frame the menu → photo → picks.
- * Everything else — lookup, dietary profile, daily goals, stats — lives
- * behind the one corner element (☰) so the golden path stays ≤ 2 taps.
+ * Everything else — just the dietary profile in Sushi 2.1 — lives behind
+ * the one corner element (☰) so the golden path stays ≤ 2 taps.
  */
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Image } from 'expo-image';
@@ -11,14 +11,14 @@ import { useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { CookingLoader } from '@/components/cooking-loader';
+import { NarrativeLoader } from '@/components/narrative-loader';
 import { Body, Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { APP_VERSION } from '@/constants/version';
 import { useProgressSteps } from '@/hooks/use-progress-steps';
-import { callVision } from '@/lib/callVision';
-import { applyHardGate } from '@/lib/dietaryFilter';
-import { prepareMenuImage } from '@/lib/image';
+import { callVision } from '@/engine/callVision';
+import { applyHardGate } from '@/engine/dietaryFilter';
+import { prepareMenuImage } from '@/engine/image';
 import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
 
@@ -30,7 +30,7 @@ type Shot = { uri: string };
  */
 function CornerMenu({ dark }: { dark?: boolean }) {
   const router = useRouter();
-  const { preferences, tdee } = useProfile();
+  const { preferences } = useProfile();
   const [open, setOpen] = useState(false);
   const go = (path: string) => {
     setOpen(false);
@@ -57,28 +57,11 @@ function CornerMenu({ dark }: { dark?: boolean }) {
               <Text style={menu.version}>{APP_VERSION}</Text>
             </View>
             <MenuRow
-              icon="🔎"
-              label="Look up a restaurant"
-              sub="before you go — one web search"
-              onPress={() => go('/lookup')}
-            />
-            <MenuRow
               icon="✎"
               label="Dietary profile"
               sub={preferences ?? 'tell me what you avoid'}
               onPress={() => go('/preferences?edit=1')}
             />
-            <MenuRow
-              icon="🔥"
-              label="Daily goals"
-              sub={
-                tdee
-                  ? `${tdee.calories.toLocaleString()} kcal · P${tdee.protein_g} C${tdee.carbs_g} F${tdee.fat_g}`
-                  : 'set calories & macros'
-              }
-              onPress={() => go('/tdee?edit=1')}
-            />
-            <MenuRow icon="⚡" label="Session stats" sub="API calls & cost" onPress={() => go('/stats')} />
           </Pressable>
         </Pressable>
       </Modal>
@@ -153,12 +136,12 @@ export default function CameraScreen() {
   // --- Live-status loader while Vision reads the menu
   if (busy) {
     return (
-      <CookingLoader
+      <NarrativeLoader
         done={done}
         steps={steps}
-        // Straight to the combined summary + picks screen — it kicks off the
-        // instant ranking itself; no question funnel in between.
-        onReady={() => router.replace('/results')}
+        // Straight to the picks screen — it kicks off the instant ranking
+        // itself; no question funnel in between.
+        onReady={() => router.replace('/picks')}
         title="Reading your menu"
       />
     );
@@ -180,7 +163,7 @@ export default function CameraScreen() {
             plAIt needs your camera to read the menu in front of you — or upload a photo instead.
           </Subtitle>
           <PrimaryButton label="Allow camera" onPress={requestPermission} />
-          <PrimaryButton label="🖼  Upload a photo" variant="teal" onPress={pickFromLibrary} />
+          <PrimaryButton label="🖼  Upload a photo" variant="soft" onPress={pickFromLibrary} />
         </View>
       </SafeAreaView>
     );
@@ -295,12 +278,12 @@ const styles = StyleSheet.create({
   full: { flex: 1, backgroundColor: '#000' },
   safe: {
     flex: 1,
-    backgroundColor: Plait.color.background,
+    backgroundColor: Plait.color.paper,
     padding: Plait.space.lg,
   },
   gate: {
     flex: 1,
-    backgroundColor: Plait.color.background,
+    backgroundColor: Plait.color.paper,
     padding: Plait.space.lg,
   },
   gateTop: { flexDirection: 'row', justifyContent: 'flex-end' },
@@ -344,7 +327,7 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: Plait.color.coral,
+    backgroundColor: Plait.color.green,
   },
   uploadLink: {
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -353,7 +336,7 @@ const styles = StyleSheet.create({
     borderRadius: Plait.radius.pill,
     overflow: 'hidden',
   },
-  uploadText: { color: '#fff', fontSize: 15, fontWeight: '600', fontFamily: Plait.font.sans },
+  uploadText: { color: '#fff', fontSize: 15, fontWeight: '600', fontFamily: Plait.font.body },
   preview: {
     flex: 1,
     borderRadius: Plait.radius.lg,

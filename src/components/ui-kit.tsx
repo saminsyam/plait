@@ -45,20 +45,20 @@ export function PrimaryButton({
   label,
   onPress,
   disabled,
-  variant = 'coral',
+  variant = 'solid',
   style,
 }: {
   label: string;
   onPress: () => void;
   disabled?: boolean;
-  /** coral = filled green (primary) · teal = soft-green secondary · ghost = outline */
-  variant?: 'coral' | 'teal' | 'ghost';
+  /** solid = filled green (primary) · soft = soft-green secondary · ghost = outline */
+  variant?: 'solid' | 'soft' | 'ghost';
   style?: ViewStyle;
 }) {
   const bg =
-    variant === 'coral' ? Plait.color.green : variant === 'teal' ? Plait.color.greenSoft : 'transparent';
+    variant === 'solid' ? Plait.color.green : variant === 'soft' ? Plait.color.greenSoft : 'transparent';
   const fg =
-    variant === 'coral' ? '#FFFFFF' : variant === 'teal' ? Plait.color.green : Plait.color.inkSoft;
+    variant === 'solid' ? '#FFFFFF' : variant === 'soft' ? Plait.color.green : Plait.color.inkSoft;
   return (
     <Pressable
       onPress={onPress}

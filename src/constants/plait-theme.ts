@@ -5,14 +5,9 @@
  *   green = matched / safe / primary actions (the brand color)
  *   amber = verify-with-staff contexts ONLY
  *   plum  = stretch picks ONLY, always paired with dashed borders
- *
- * Legacy v1 keys (background / coral / teal / text / …) are kept as aliases
- * mapped into the new system so every v1 screen compiles and inherits the
- * paper look without a per-screen rewrite. New code should use the v2 names.
  */
 export const Plait = {
   color: {
-    // ── v2 paper system
     paper: '#FBFAF7',
     card: '#FFFFFF',
     ink: '#1B1E1B',
@@ -25,20 +20,10 @@ export const Plait = {
     amberSoft: '#FBF1E0',
     plum: '#6E3B8E',
     plumSoft: '#F3ECF8',
-
-    // ── legacy aliases (v1 screens)
-    background: '#FBFAF7', // → paper
-    cardElevated: '#EFEDE6',
-    coral: '#1F5C40', // primary accent → green
-    teal: '#1F5C40', // secondary accent → green (amber/plum are reserved)
-    text: '#1B1E1B', // → ink
-    textDim: '#5C615C', // → inkSoft
-    border: '#E7E5DE', // → line
     danger: '#A8402F', // errors only — verify contexts use amber
-    warn: '#B26A00', // → amber
   },
   font: {
-    // ── v2 type ramp (exact static weights; loaded in app/_layout)
+    // Exact static weights; loaded in app/_layout.
     display: 'Fraunces_600SemiBold', // dish names, headers
     displayMedium: 'Fraunces_500Medium',
     body: 'PublicSans_400Regular',
@@ -46,11 +31,6 @@ export const Plait = {
     bodyBold: 'PublicSans_700Bold',
     mono: 'SplineSansMono_400Regular', // prices, scores, eyebrow labels
     monoSemiBold: 'SplineSansMono_600SemiBold',
-
-    // ── legacy aliases (v1 screens; their fontWeight overrides are ignored
-    //    on iOS for loaded fonts — hierarchy there leans on size/color)
-    serif: 'Fraunces_600SemiBold',
-    sans: 'PublicSans_400Regular',
   },
   space: {
     xs: 6,

@@ -2,7 +2,7 @@
  * Unit tests for the on-device crowd-favorite ↔ menu-item matcher and the
  * lookup page's name-only hard-constraint warning.
  *
- *   npx tsx --test src/lib/matchReviews.test.ts
+ *   npx tsx --test src/engine/matchReviews.test.ts
  *   (or: npm test)
  *
  * Pure functions only — no API key, no network. Zero tokens by design.

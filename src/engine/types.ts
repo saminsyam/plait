@@ -16,8 +16,8 @@ export type MenuItem = {
   cuisine_type: string;
   /**
    * Rough protein estimate (grams/serving) from the enrichment pass — a
-   * name-only guess, only good enough for the protein-per-dollar value sort
-   * (lib/proteinValue). 0 or absent = unknown.
+   * name-only guess that grounds the ranking call's macro estimates.
+   * 0 or absent = unknown.
    */
   protein_g_est?: number;
 };

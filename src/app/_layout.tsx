@@ -52,13 +52,9 @@ export default function RootLayout() {
               animation: 'slide_from_right',
             }}>
             <Stack.Screen name="index" />
-            <Stack.Screen name="tdee" />
             <Stack.Screen name="preferences" />
-            <Stack.Screen name="lookup" />
             <Stack.Screen name="camera" />
-            <Stack.Screen name="questions" />
-            <Stack.Screen name="results" />
-            <Stack.Screen name="stats" />
+            <Stack.Screen name="picks" />
           </Stack>
         </SessionProvider>
       </ProfileProvider>

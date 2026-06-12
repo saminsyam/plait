@@ -1,18 +1,15 @@
 /**
- * Picks screen — Sushi 2.1 (v2 spec, June 2026).
+ * Picks screen — Sushi 2.1. Everything after the scan lives on this one page:
+ * header + gate line, ONE hero card ("Our pick for you") with hold-to-lock,
+ * two compact contenders, a detail sheet with tap-to-explain, and the four
+ * tune chips as a persistent bottom row.
  *
- * One decision per screen: header + gate line, ONE hero card ("Our pick for
- * you") with hold-to-lock, two compact contenders, a detail sheet, and a
- * persistent tune-chip row. Everything else is a single quiet line — trust
- * notes, the refine offer, crowd favorites — or lives in the detail sheet.
- * The "Adventurous?" toggle flips one contender into a deterministic stretch
- * pick (dashed plum, zero tokens, allowed-only).
- *
- * All v1 engine behavior is preserved: instant rank off the scan, quick-tune
- * chips + budget ceiling (behind the $ chip) pre-trim the gated pool on-device
- * before ONE re-rank call, dish detail is lazily fetched and cached, crowd
- * favorites still feed the ranking context and the card badge, and blocked
- * items live behind the gate line's "view" — never silently dropped.
+ * Zero-token interactions feel instant (spec §2.5): tune chips re-deal the
+ * ranked picks deterministically on-device, and "Adventurous?" flips one
+ * contender into a deterministic stretch pick (dashed plum, allowed-only).
+ * The model appears exactly twice: the instant rank off the scan, and ONE
+ * re-rank when the refine sheet finishes narrowing. Blocked dishes live
+ * behind the gate line's "view" — never silently dropped.
  */
 import { Redirect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -32,24 +29,22 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BudgetSlider } from '@/components/budget-slider';
+import { ExplainText } from '@/components/explain-text';
 import { HoldToLock } from '@/components/hold-to-lock';
 import { MatchRing } from '@/components/match-ring';
-import type { CrowdFavoritesState } from '@/components/restaurant-summary';
+import { RefineSheet } from '@/components/refine-sheet';
 import { Body, Eyebrow, PrimaryButton } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
+import { bridgePick } from '@/engine/bridgePick';
+import { callDishDetail, type DishDetail } from '@/engine/callDishDetail';
+import { callReason } from '@/engine/callReason';
+import type { FilteredItem } from '@/engine/dietaryFilter';
+import { choicesToQA, filterBySpice, nextQuestion, type EngineChoice } from '@/engine/questionEngine';
+import { refineNudge } from '@/engine/refineNudge';
+import { applyTune, TUNES, type DealEntry, type TuneId } from '@/engine/tunes';
+import type { Answers, MenuItem, Pick, Question } from '@/engine/types';
 import { useCrowdFavorites } from '@/hooks/use-crowd-favorites';
 import { useProgressSteps, type ProgressStep } from '@/hooks/use-progress-steps';
-import { budgetBounds, budgetRequest, filterByBudget } from '@/lib/budget';
-import { callDishDetail, type DishDetail } from '@/lib/callDishDetail';
-import { callReason } from '@/lib/callReason';
-import type { FilteredItem } from '@/lib/dietaryFilter';
-import { proteinValueLabel } from '@/lib/proteinValue';
-import { filterBySpice, nextQuestion } from '@/lib/questionEngine';
-import { applyQuickTunes, QUICK_TUNES, tuneRequests, type QuickTuneId } from '@/lib/quickTune';
-import { refineNudge } from '@/lib/refineNudge';
-import { formatUsd, getUsage } from '@/lib/usage';
-import type { MenuItem, Pick } from '@/lib/types';
 import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
 
@@ -64,52 +59,12 @@ const CONFIDENCE_LABEL: Record<string, string> = {
   low: '±25%',
 };
 
-/** What the sheet (and the cards) are showing for one slot. */
+/** What the cards (and the detail sheet) are showing for one slot. */
 type DisplayEntry =
-  | { kind: 'pick'; pick: Pick; item: MenuItem }
+  | { kind: 'pick'; pick: Pick; item: MenuItem; needsVerify: boolean }
   | { kind: 'stretch'; item: MenuItem; why: string };
 
-/**
- * Deterministic bridge pick for explore mode — zero tokens. An `allowed`-only
- * candidate outside the current picks (verify items never stretch: stretch
- * requires HIGHER confidence, never lower), preferring house signatures and
- * dishes sharing a flavor lane with the hero so the unfamiliar item has a
- * bridge back to something the ranker already matched.
- */
-function bridgePick({
-  picks,
-  candidates,
-  verifyById,
-  signatureIds,
-  byId,
-}: {
-  picks: Pick[];
-  candidates: MenuItem[];
-  verifyById: Record<string, string[]>;
-  signatureIds: string[];
-  byId: Map<string, MenuItem>;
-}): { item: MenuItem; why: string } | null {
-  const picked = new Set(picks.map((p) => p.item_id));
-  const hero = picks.length > 0 ? byId.get(picks[0].item_id) : undefined;
-  const sigs = new Set(signatureIds);
-  const pool = candidates.filter((c) => !picked.has(c.id) && !(verifyById[c.id]?.length));
-  if (pool.length === 0) return null;
-
-  const shared = (c: MenuItem) =>
-    hero ? c.flavor_profile.filter((f) => hero.flavor_profile.includes(f)) : [];
-  const score = (c: MenuItem) => (sigs.has(c.id) ? 2 : 0) + Math.min(2, shared(c).length);
-  const sorted = [...pool].sort((a, b) => score(b) - score(a) || a.id.localeCompare(b.id));
-  const item = sorted[0];
-
-  const bridge = shared(item);
-  const why =
-    hero && bridge.length > 0
-      ? `New to you — shares the ${bridge[0]} lane of the ${hero.name}, a low-risk doorway.`
-      : sigs.has(item.id)
-        ? 'New to you — a house signature that still clears your gate.'
-        : 'New to you — a different lane on this menu that still clears your gate.';
-  return { item, why };
-}
+type BadgeKind = 'verify' | 'stretch' | 'crowd' | 'spice' | null;
 
 /** Gate-line summary: "pork, shrimp paste" from the blocked items' reasons. */
 function gateSummary(blocked: FilteredItem[]): string {
@@ -182,15 +137,11 @@ const mb = StyleSheet.create({
 });
 
 /** The one badge a card is allowed (spec: max one). */
-function CardBadge({ kind }: { kind: 'verify' | 'stretch' | 'crowd' | 'spice' | null }) {
-  if (kind === 'verify')
-    return <Text style={[badge.base, badge.verify]}>ask staff</Text>;
-  if (kind === 'stretch')
-    return <Text style={[badge.base, badge.stretch]}>stretch pick</Text>;
-  if (kind === 'crowd')
-    return <Text style={[badge.base, badge.crowd]}>★ crowd favorite</Text>;
-  if (kind === 'spice')
-    return <Text style={[badge.base, badge.spice]}>🌶 spicier than stated</Text>;
+function CardBadge({ kind }: { kind: BadgeKind }) {
+  if (kind === 'verify') return <Text style={[badge.base, badge.verify]}>ask staff</Text>;
+  if (kind === 'stretch') return <Text style={[badge.base, badge.stretch]}>stretch pick</Text>;
+  if (kind === 'crowd') return <Text style={[badge.base, badge.crowd]}>★ crowd favorite</Text>;
+  if (kind === 'spice') return <Text style={[badge.base, badge.spice]}>🌶 spicier than stated</Text>;
   return null;
 }
 
@@ -209,10 +160,10 @@ const badge = StyleSheet.create({
   spice: { color: Plait.color.inkSoft, backgroundColor: Plait.color.line },
 });
 
-export default function ResultsScreen() {
+export default function PicksScreen() {
   const router = useRouter();
   const session = useSession();
-  const { preferences, tdee, spiceCeiling } = useProfile();
+  const { preferences, spiceCeiling } = useProfile();
   const {
     picks,
     items,
@@ -227,8 +178,7 @@ export default function ResultsScreen() {
     picksSource,
     setOutcome,
   } = session;
-  const { crowdState, crowdReady } = useCrowdFavorites();
-
+  const { crowdEntries, crowdReady } = useCrowdFavorites();
 
   // Detail sheet state — one dish at a time, detail lazily fetched + cached.
   const [sheet, setSheet] = useState<DisplayEntry | null>(null);
@@ -245,61 +195,60 @@ export default function ResultsScreen() {
     return () => sub.remove();
   }, []);
 
-  // ── Instant ranking — the scan lands here directly; picks arrive without
-  // questions. The narrowing flow is an optional refinement (button below).
+  // ── Ranking (instant off the scan; once more if the refine sheet runs).
   const { steps, onProgress, resetProgress } = useProgressSteps();
   const [rankState, setRankState] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
-  const [tunes, setTunes] = useState<QuickTuneId[]>([]);
-  // Per-menu price ceiling from the budget slider; null = no limit.
-  const [budget, setBudget] = useState<number | null>(null);
   const rankStarted = useRef(false);
+  type RankRequest = {
+    pool: MenuItem[];
+    questions: Question[];
+    answers: Answers;
+    source: 'instant' | 'refined';
+  };
+  const lastRank = useRef<RankRequest | null>(null);
 
-  // ── v2 picks-screen state: mode toggle, hold-to-lock, gate-line view,
-  // and the budget panel folded behind the $ chip in the tune bar.
+  // ── One-page interactions: tune chip, mode toggle, lock, gate view, refine.
+  const [tune, setTune] = useState<TuneId | null>(null);
   const [adventurous, setAdventurous] = useState(false);
   const [locked, setLocked] = useState(false);
   const [gateOpen, setGateOpen] = useState(false);
-  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [refineOpen, setRefineOpen] = useState(false);
 
   const runRank = useCallback(
-    async (tuneIds: QuickTuneId[], ceiling: number | null) => {
+    async (request: RankRequest) => {
+      lastRank.current = request;
       setRankState('running');
       setLocked(false);
+      setTune(null);
       resetProgress();
       try {
-        // Profile heat ceiling + budget ceiling + active chips pre-trim the
-        // pool on-device — zero tokens, and only ever over the gate's survivors.
-        const pool = applyQuickTunes(
-          filterByBudget(filterBySpice(candidates, spiceCeiling), ceiling),
-          tuneIds
-        );
+        const { pool, questions: qs, answers: ans, source } = request;
         // One short context line for review-praised dishes still in the pool.
         // (Gate-blocked items were never candidates, so they can't appear here.)
         const crowdNames = pool.filter((i) => crowdFavorites[i.id]).map((i) => i.name);
+        const verifyForPool = Object.fromEntries(
+          Object.entries(verifyById).filter(([id]) => pool.some((i) => i.id === id))
+        );
         const ranked = await callReason({
           items: pool,
-          questions: [],
-          answers: {},
+          questions: qs,
+          answers: ans,
           userPreferences: preferences ?? '',
-          verifyById,
-          tdeeContext: tdee,
+          verifyById: verifyForPool,
           restaurantNotes,
           crowdFavorites: crowdNames,
-          tuneRequests: [
-            ...tuneRequests(tuneIds),
-            ...(budgetRequest(ceiling) ? [budgetRequest(ceiling)!] : []),
-          ],
           onProgress,
         });
-        setOutcome({ questions: [], answers: {}, spice: spiceCeiling, picks: ranked, source: 'instant' });
+        setOutcome({ questions: qs, answers: ans, spice: spiceCeiling, picks: ranked, source });
         setRankState('done');
       } catch {
         setRankState('error');
       }
     },
-    [candidates, spiceCeiling, crowdFavorites, preferences, verifyById, tdee, restaurantNotes, onProgress, resetProgress, setOutcome]
+    [crowdFavorites, verifyById, preferences, restaurantNotes, spiceCeiling, onProgress, resetProgress, setOutcome]
   );
 
+  // Instant rank: the scan lands here directly; picks arrive without questions.
   const hasScan = !!menuContext && items.length > 0;
   useEffect(() => {
     if (rankStarted.current) return;
@@ -307,26 +256,26 @@ export default function ResultsScreen() {
     // Wait for the (local, fast) review-cache check so cached crowd favorites
     // make it into the very first ranking call instead of racing it.
     if (!crowdReady) return;
-    // A ranking already ran for this scan (e.g. returning from refine).
+    // A ranking already ran for this scan (e.g. remount on web reload).
     if (picks.length > 0 || picksSource !== null) return;
     rankStarted.current = true;
-    void runRank([], null);
-  }, [hasScan, candidates.length, picks.length, picksSource, crowdReady, runRank]);
+    void runRank({
+      pool: filterBySpice(candidates, spiceCeiling),
+      questions: [],
+      answers: {},
+      source: 'instant',
+    });
+  }, [hasScan, candidates, spiceCeiling, picks.length, picksSource, crowdReady, runRank]);
 
-  // One-tap corrections: toggle a chip → one re-rank with the new set.
-  const toggleTune = (id: QuickTuneId) => {
-    if (rankState === 'running') return;
-    const next = tunes.includes(id) ? tunes.filter((t) => t !== id) : [...tunes, id];
-    setTunes(next);
-    void runRank(next, budget);
-  };
-
-  // Budget slider release → one re-rank with the new ceiling (null = no limit).
-  const commitBudget = (ceiling: number | null) => {
-    if (rankState === 'running' || ceiling === budget) return;
-    setBudget(ceiling);
-    void runRank(tunes, ceiling);
-  };
+  // The refine sheet hands back a narrowed pool + recorded choices → ONE re-rank.
+  const onRefineDone = useCallback(
+    (pool: MenuItem[], choices: EngineChoice[]) => {
+      setRefineOpen(false);
+      const qa = choicesToQA(choices);
+      void runRank({ pool, questions: qa.questions, answers: qa.answers, source: 'refined' });
+    },
+    [runRank]
+  );
 
   // Guard: no scan in progress → home. <Redirect> (not router.replace in an
   // effect) is safe on a cold web load, before the root navigator mounts.
@@ -335,7 +284,7 @@ export default function ResultsScreen() {
   const byId = new Map(items.map((i) => [i.id, i]));
 
   // A halal/kosher certification note is a positive trust signal — surface it
-  // as a banner, and suppress the per-dish "verify halal" flag (cert covers it).
+  // as a quiet line, and suppress the per-dish "verify halal" flag (cert covers it).
   const halalCertified = restaurantNotes.some((n) => /halal/i.test(n));
   const trustNotes = restaurantNotes.filter((n) => /halal|kosher/i.test(n));
 
@@ -343,23 +292,25 @@ export default function ResultsScreen() {
   const maxCarbs = Math.max(1, ...picks.map((p) => p.carbs_g ?? 0));
   const maxFat = Math.max(1, ...picks.map((p) => p.fat_g ?? 0));
 
+  const pickNeedsVerify = (p: Pick): boolean => {
+    const flag = p.flag === 'verify_halal' && halalCertified ? null : p.flag;
+    return flag === 'verify_halal' || flag === 'contains_allergen' || !!verifyById[p.item_id]?.length;
+  };
+
   /** verify > stretch > spicier > crowd — one badge per card (spec). */
-  const badgeFor = (entry: DisplayEntry): 'verify' | 'stretch' | 'crowd' | 'spice' | null => {
-    const id = entry.item.id;
+  const badgeFor = (entry: DisplayEntry): BadgeKind => {
     if (entry.kind === 'stretch') return 'stretch';
-    const flag = entry.pick.flag === 'verify_halal' && halalCertified ? null : entry.pick.flag;
-    if (flag === 'verify_halal' || flag === 'contains_allergen' || verifyById[id]?.length)
-      return 'verify';
-    if (flag === 'spicier_than_stated') return 'spice';
-    if (crowdFavorites[id]) return 'crowd';
+    if (entry.needsVerify) return 'verify';
+    if (entry.pick.flag === 'spicier_than_stated') return 'spice';
+    if (crowdFavorites[entry.item.id]) return 'crowd';
     return null;
   };
 
   /** Reviewer blurb for a dish, when the loaded crowd favorites include it. */
   const crowdBlurbFor = (item: MenuItem): string | null => {
     const name = crowdFavorites[item.id];
-    if (!name || crowdState.kind !== 'loaded') return null;
-    return crowdState.favorites.find((f) => f.name === name)?.blurb || null;
+    if (!name) return null;
+    return crowdEntries.find((f) => f.name === name)?.blurb || null;
   };
 
   /** Everything the amber "ask staff" block should say for one dish. */
@@ -392,18 +343,12 @@ export default function ResultsScreen() {
     setDetailLoading(true);
     (async () => {
       try {
-        const otherPicks = picks
-          .filter((p) => p.item_id !== entry.pick.item_id)
-          .map((p) => ({ name: byId.get(p.item_id)?.name ?? 'Another dish', why: p.why }));
         const d = await callDishDetail({
           pick: entry.pick,
           item: entry.item,
           preferences: preferences ?? '',
-          tdee,
           questions,
           answers,
-          otherPicks,
-          isTopPick: entry.pick.rank === 1,
         });
         detailCache.current[id] = d;
         if (activeIdRef.current === id) setDetail(d);
@@ -430,45 +375,45 @@ export default function ResultsScreen() {
 
   // hasScan guarantees menuContext from here down.
   const o = menuContext!.orientation;
-  const cuisine =
-    menuContext!.cuisine_type && menuContext!.cuisine_type !== 'unknown'
-      ? menuContext!.cuisine_type
-      : null;
   const restaurantName = menuContext!.restaurant_name.trim();
 
   // Refinement availability + the deterministic "would questions help?" nudge
   // (the nudge text, when present, becomes the refine link's label).
   const trimmedPool = filterBySpice(candidates, spiceCeiling);
-  // Budget range from the spice-trimmed pool's prices (null = no $ chip).
-  const priceBounds = budgetBounds(trimmedPool);
   const refinable = picks.length > 0 && nextQuestion(trimmedPool, new Set()) !== null;
   const nudge =
     refinable && picksSource === 'instant' && rankState !== 'running'
-      ? refineNudge({
-          poolSize: trimmedPool.length,
-          preferencesText: preferences ?? '',
-          picks,
-        })
+      ? refineNudge({ poolSize: trimmedPool.length, preferencesText: preferences ?? '', picks })
       : null;
 
-  // ── Assemble the displayed deal: hero + two contenders. Adventurous mode
-  // flips the first contender into the deterministic stretch pick.
-  const rankedEntries: DisplayEntry[] = picks
+  // ── Assemble the displayed deal: the active tune chip re-orders the ranked
+  // picks deterministically; adventurous mode flips the first contender into
+  // the deterministic stretch pick.
+  const rankedDeal: DealEntry[] = picks
     .map((p) => {
       const item = byId.get(p.item_id);
-      return item ? ({ kind: 'pick', pick: p, item } as DisplayEntry) : null;
+      return item ? { pick: p, item, needsVerify: pickNeedsVerify(p) } : null;
     })
-    .filter((e): e is DisplayEntry => e !== null);
+    .filter((e): e is DealEntry => e !== null);
+  const orderedDeal = applyTune(tune, rankedDeal);
+  const orderedEntries: DisplayEntry[] = orderedDeal.map((e) => ({ kind: 'pick', ...e }));
+
   const stretch = adventurous
     ? bridgePick({ picks, candidates, verifyById, signatureIds: o.signature_item_ids, byId })
     : null;
-  const hero = rankedEntries[0] ?? null;
+  const hero = orderedEntries[0] ?? null;
   const contenders: DisplayEntry[] = stretch
-    ? [{ kind: 'stretch', item: stretch.item, why: stretch.why }, ...rankedEntries.slice(1, 2)]
-    : rankedEntries.slice(1, 3);
+    ? [{ kind: 'stretch', item: stretch.item, why: stretch.why }, ...orderedEntries.slice(1, 2)]
+    : orderedEntries.slice(1, 3);
 
   // Re-deal the stagger animation whenever the visible set changes.
-  const dealKey = `${picks.map((p) => p.item_id).join('·')}·${adventurous}`;
+  const dealKey = `${orderedDeal.map((e) => e.item.id).join('·')}·${adventurous}`;
+
+  const toggleTune = (id: TuneId) => {
+    if (rankState === 'running') return;
+    setLocked(false);
+    setTune((t) => (t === id ? null : id));
+  };
 
   const toggleAdventurous = () => {
     setLocked(false);
@@ -480,11 +425,6 @@ export default function ResultsScreen() {
     setGateOpen((g) => !g);
   };
 
-  const toggleBudget = () => {
-    if (!reduceMotion) LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setBudgetOpen((b) => !b);
-  };
-
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
@@ -492,8 +432,7 @@ export default function ResultsScreen() {
         <View style={styles.head}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Eyebrow>
-              scanned{cuisine ? ` · ${cuisine}` : ''} · {items.length}{' '}
-              {items.length === 1 ? 'dish' : 'dishes'}
+              scanned · {items.length} {items.length === 1 ? 'dish' : 'dishes'}
             </Eyebrow>
             <Text style={styles.restaurant} numberOfLines={2}>
               {restaurantName || 'Here’s the place'}
@@ -517,7 +456,8 @@ export default function ResultsScreen() {
               <View style={styles.gateDot} />
               <Text style={styles.gateText} numberOfLines={2}>
                 {blocked.length} {blocked.length === 1 ? 'dish' : 'dishes'} hidden for you —{' '}
-                {gateSummary(blocked)} · <Text style={styles.gateView}>{gateOpen ? 'hide' : 'view'}</Text>
+                {gateSummary(blocked)} ·{' '}
+                <Text style={styles.gateView}>{gateOpen ? 'hide' : 'view'}</Text>
               </Text>
             </Pressable>
             {gateOpen && (
@@ -557,22 +497,20 @@ export default function ResultsScreen() {
             <Body style={styles.emptyPicks}>
               The menu is read — only the ranking failed. Give it another go.
             </Body>
-            <PrimaryButton label="Try ranking again" onPress={() => void runRank(tunes, budget)} />
+            <PrimaryButton
+              label="Try ranking again"
+              onPress={() => lastRank.current && void runRank(lastRank.current)}
+            />
           </View>
         )}
 
         {/* ── The deal: hero + two contenders */}
-        {hero && (
+        {hero && rankState !== 'running' && (
           <View key={dealKey} style={styles.deal}>
             <DealIn index={0} reduceMotion={reduceMotion}>
               <HeroCard
                 entry={hero}
                 badge={badgeFor(hero)}
-                valueLabel={
-                  tunes.includes('protein_value') && hero.kind === 'pick'
-                    ? proteinValueLabel(hero.pick.protein_g, hero.item.price)
-                    : null
-                }
                 locked={locked}
                 onLock={() => setLocked(true)}
                 onOpen={() => openSheet(hero)}
@@ -595,70 +533,51 @@ export default function ResultsScreen() {
             nudge supplies the label when it fires; hidden when no facet could
             split the (spice-trimmed) pool anyway. */}
         {refinable && rankState !== 'running' && (
-          <Pressable onPress={() => router.push('/questions')} hitSlop={8}>
+          <Pressable onPress={() => setRefineOpen(true)} hitSlop={8}>
             <Text style={styles.refineLink}>{nudge ?? 'Not quite? Refine my picks'} →</Text>
           </Pressable>
         )}
 
-        {/* Crowd favorites, compressed to one honest line. Loaded names still
-            feed the ranking context + card badges; blurbs live in the sheet. */}
-        <CrowdLine state={crowdState} />
-
-        <PrimaryButton label="Scan another menu" variant="ghost" onPress={scanAnother} />
-        <UsageLine />
+        {rankState !== 'running' && (
+          <Pressable onPress={scanAnother} hitSlop={8}>
+            <Text style={styles.scanLink}>‹ Scan another menu</Text>
+          </Pressable>
+        )}
       </ScrollView>
 
-      {/* ── Persistent tune chips — deterministic re-deals, zero tokens until
-          the single re-rank call. The $ chip unfolds the menu-priced budget
-          slider; everything else on the screen stays put. */}
-      {candidates.length > 1 && picksSource !== null && (
+      {/* ── Persistent tune chips — deterministic re-deals, zero tokens. */}
+      {picks.length > 1 && (
         <View style={styles.tuneBar}>
-          {budgetOpen && priceBounds && (
-            <BudgetSlider
-              bounds={priceBounds}
-              value={budget}
-              disabled={rankState === 'running'}
-              onCommit={commitBudget}
-            />
-          )}
-          <View style={styles.tuneRow}>
-            {priceBounds && (
+          {TUNES.map((t) => {
+            const on = tune === t.id;
+            return (
               <Pressable
-                onPress={toggleBudget}
+                key={t.id}
+                onPress={() => toggleTune(t.id)}
                 style={[
                   styles.tuneChip,
-                  styles.tuneChipBudget,
-                  budgetOpen && styles.tuneChipOpen,
-                  budget !== null && styles.tuneChipActive,
+                  on && styles.tuneChipActive,
                   rankState === 'running' && { opacity: 0.4 },
                 ]}>
                 <Text
-                  style={[styles.tuneChipText, budget !== null && styles.tuneChipTextActive]}
+                  style={[styles.tuneChipText, on && styles.tuneChipTextActive]}
                   numberOfLines={1}>
-                  {budget !== null ? `≤ $${budget}` : '💸 $'}
+                  {t.label}
                 </Text>
               </Pressable>
-            )}
-            {QUICK_TUNES.map((t) => {
-              const on = tunes.includes(t.id);
-              return (
-                <Pressable
-                  key={t.id}
-                  onPress={() => toggleTune(t.id)}
-                  style={[
-                    styles.tuneChip,
-                    on && styles.tuneChipActive,
-                    rankState === 'running' && { opacity: 0.4 },
-                  ]}>
-                  <Text style={[styles.tuneChipText, on && styles.tuneChipTextActive]} numberOfLines={1}>
-                    {t.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+            );
+          })}
         </View>
       )}
+
+      {/* ── Refine sheet — narrowing questions without leaving the page. */}
+      <RefineSheet
+        visible={refineOpen}
+        initialPool={trimmedPool}
+        spiceCeiling={spiceCeiling}
+        onDone={onRefineDone}
+        onClose={() => setRefineOpen(false)}
+      />
 
       {/* ── Detail sheet */}
       <Modal
@@ -679,7 +598,9 @@ export default function ResultsScreen() {
                     <Text style={styles.sheetName}>{sheet.item.name}</Text>
                     <Text style={styles.sheetMeta}>
                       {sheet.item.price > 0 ? `$${sheet.item.price.toFixed(2)}` : ''}
-                      {sheet.kind === 'pick' ? `${sheet.item.price > 0 ? ' · ' : ''}match ${sheet.pick.match_score}` : ''}
+                      {sheet.kind === 'pick'
+                        ? `${sheet.item.price > 0 ? ' · ' : ''}match ${sheet.pick.match_score}`
+                        : ''}
                     </Text>
                   </View>
                   <MatchRing
@@ -730,28 +651,10 @@ export default function ResultsScreen() {
                         <Text style={styles.errorText}>Couldn’t load extra details — tap to retry.</Text>
                       </Pressable>
                     )}
-                    {!detailLoading && detail && (
-                      <>
-                        {detail.why_this_pick !== '' && (
-                          <Text style={[styles.sheetWhy, { marginTop: 8 }]}>{detail.why_this_pick}</Text>
-                        )}
-                        {detail.how_to_order.length > 0 && (
-                          <>
-                            <Eyebrow style={{ color: Plait.color.green, marginTop: 16, marginBottom: 6 }}>
-                              how to order
-                            </Eyebrow>
-                            {detail.how_to_order.map((m, i) => (
-                              <View key={i} style={styles.orderRow}>
-                                <Text style={styles.orderPlus}>+</Text>
-                                <Text style={styles.orderText}>{m}</Text>
-                              </View>
-                            ))}
-                          </>
-                        )}
-                        {sheet.pick.rank === 1 && detail.why_not_others !== '' && (
-                          <Text style={styles.whyNot}>{detail.why_not_others}</Text>
-                        )}
-                      </>
+                    {!detailLoading && detail && detail.why_this_pick !== '' && (
+                      <View style={{ marginTop: 8 }}>
+                        <ExplainText text={detail.why_this_pick} terms={detail.explain_terms} />
+                      </View>
                     )}
                   </>
                 )}
@@ -791,14 +694,12 @@ export default function ResultsScreen() {
 function HeroCard({
   entry,
   badge: badgeKind,
-  valueLabel,
   locked,
   onLock,
   onOpen,
 }: {
   entry: DisplayEntry;
-  badge: 'verify' | 'stretch' | 'crowd' | 'spice' | null;
-  valueLabel: string | null;
+  badge: BadgeKind;
   locked: boolean;
   onLock: () => void;
   onOpen: () => void;
@@ -824,7 +725,6 @@ function HeroCard({
           <Text style={styles.heroPrice}>${entry.item.price.toFixed(2)}</Text>
         )}
         <CardBadge kind={badgeKind} />
-        {valueLabel && <Text style={styles.valueLabel}>💪 {valueLabel}</Text>}
         <View style={{ flex: 1 }} />
         <Pressable onPress={onOpen} hitSlop={8}>
           <Text style={styles.whyLink}>why? →</Text>
@@ -842,7 +742,7 @@ function ContenderCard({
   onOpen,
 }: {
   entry: DisplayEntry;
-  badge: 'verify' | 'stretch' | 'crowd' | 'spice' | null;
+  badge: BadgeKind;
   onOpen: () => void;
 }) {
   const stretchy = entry.kind === 'stretch';
@@ -873,9 +773,8 @@ function ContenderCard({
 }
 
 /**
- * Inline ranking status — one row per real pipeline stage (same events the
- * full-screen CookingLoader consumes elsewhere), shown where the pick cards
- * will appear so the page reads "summary now, picks streaming in".
+ * Inline ranking status — one row per real pipeline stage, shown where the
+ * pick cards will appear so the page reads "summary now, picks streaming in".
  */
 function RankStatus({ steps }: { steps: ProgressStep[] }) {
   // Re-render a few times a second so the per-step timers tick (the timers
@@ -896,7 +795,7 @@ function RankStatus({ steps }: { steps: ProgressStep[] }) {
         return (
           <View key={step.id} style={styles.rankLine}>
             <Text style={styles.rankRow} numberOfLines={1}>
-              {isDone ? '✅' : step.icon} {step.label}
+              {isDone ? '✓' : step.icon} {step.label}
               {step.detail ? ` — ${step.detail}` : ''}
             </Text>
             <Text style={styles.rankTime}>{seconds}s</Text>
@@ -904,57 +803,6 @@ function RankStatus({ steps }: { steps: ProgressStep[] }) {
         );
       })}
     </View>
-  );
-}
-
-/**
- * Crowd favorites, compressed from the v1 tile to one honest line. The offer
- * keeps its price tag; loading shows the REAL latest pipeline status; loaded
- * lists the reviewer-cited names (⚠️ = conflicts with your hard constraints);
- * a dry search says so instead of inventing reviews.
- */
-function CrowdLine({ state }: { state: CrowdFavoritesState }) {
-  if (state.kind === 'hidden') return null;
-  if (state.kind === 'offer') {
-    return (
-      <Pressable onPress={state.onFetch} hitSlop={8}>
-        <Text style={styles.crowdLine}>
-          <Text style={styles.crowdLink}>★ See what reviewers order</Text> · one search · ~$0.02
-        </Text>
-      </Pressable>
-    );
-  }
-  if (state.kind === 'loading') {
-    return <Text style={styles.crowdLine}>★ {state.statusLine ?? 'Searching reviews…'}</Text>;
-  }
-  if (state.kind === 'empty') {
-    return (
-      <Text style={styles.crowdLine}>
-        ★ {state.message ?? 'No reviews found for this place — nothing to cite.'}
-      </Text>
-    );
-  }
-  const names = state.favorites.map((f) => (f.warning ? `⚠️ ${f.name}` : f.name));
-  return (
-    <Text style={styles.crowdLine} numberOfLines={2}>
-      ★ Reviewers love: {names.join(', ')} · from web reviews
-    </Text>
-  );
-}
-
-/** Dim one-liner with the app-session API spend — taps through to /stats. */
-function UsageLine() {
-  const router = useRouter();
-  const { totals } = getUsage();
-  if (totals.calls === 0) return null;
-  const tokens = totals.inputTokens + totals.outputTokens;
-  return (
-    <Pressable onPress={() => router.push('/stats')} hitSlop={8}>
-      <Text style={styles.usageLine}>
-        ⚡ {totals.calls} API calls · {(tokens / 1000).toFixed(1)}k tokens ·{' '}
-        {formatUsd(totals.costUsd)} this session ›
-      </Text>
-    </Pressable>
   );
 }
 
@@ -1000,9 +848,9 @@ const styles = StyleSheet.create({
   gateRow: { gap: 2 },
   gateName: { fontFamily: Plait.font.bodySemiBold, fontSize: 14, color: Plait.color.ink },
   gateReason: { fontFamily: Plait.font.body, fontSize: 12.5, lineHeight: 17, color: Plait.color.inkSoft },
-
-  // Quiet lines (trust note · refine offer · crowd favorites)
   trustCheck: { color: Plait.color.green, fontSize: 12, fontFamily: Plait.font.bodyBold },
+
+  // Quiet lines
   refineLink: {
     textAlign: 'center',
     fontFamily: Plait.font.bodySemiBold,
@@ -1010,15 +858,13 @@ const styles = StyleSheet.create({
     color: Plait.color.green,
     paddingVertical: 4,
   },
-  crowdLine: {
+  scanLink: {
     textAlign: 'center',
     fontFamily: Plait.font.body,
-    fontSize: 12,
-    lineHeight: 17,
-    color: Plait.color.inkSoft,
+    fontSize: 12.5,
+    color: Plait.color.inkFaint,
     paddingVertical: 2,
   },
-  crowdLink: { fontFamily: Plait.font.bodySemiBold, color: Plait.color.green },
 
   // Deal
   deal: { gap: 10 },
@@ -1041,7 +887,6 @@ const styles = StyleSheet.create({
   heroWhy: { fontFamily: Plait.font.body, fontSize: 13.5, lineHeight: 20, color: Plait.color.inkSoft },
   heroMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   heroPrice: { fontFamily: Plait.font.monoSemiBold, fontSize: 14, color: Plait.color.ink },
-  valueLabel: { fontFamily: Plait.font.bodySemiBold, fontSize: 11, color: Plait.color.green },
   whyLink: { fontFamily: Plait.font.bodySemiBold, fontSize: 12, color: Plait.color.green },
   lockedNote: {
     textAlign: 'center',
@@ -1091,17 +936,6 @@ const styles = StyleSheet.create({
   detailLoader: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: Plait.space.sm },
   detailLoaderText: { color: Plait.color.inkSoft, fontSize: 13, fontFamily: Plait.font.body },
   errorText: { color: Plait.color.inkSoft, fontSize: 13, fontFamily: Plait.font.body, paddingVertical: 8 },
-  orderRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginBottom: 4 },
-  orderPlus: { color: Plait.color.green, fontSize: 15, fontFamily: Plait.font.bodyBold, lineHeight: 21 },
-  orderText: { flex: 1, color: Plait.color.ink, fontSize: 14, lineHeight: 21, fontFamily: Plait.font.body },
-  whyNot: {
-    color: Plait.color.inkFaint,
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: Plait.font.body,
-    fontStyle: 'italic',
-    marginTop: 12,
-  },
   crowdBlock: {
     marginTop: 16,
     backgroundColor: Plait.color.greenSoft,
@@ -1135,9 +969,10 @@ const styles = StyleSheet.create({
   rankRow: { flex: 1, color: Plait.color.ink, fontSize: 13.5, fontFamily: Plait.font.body },
   rankTime: { color: Plait.color.inkSoft, fontSize: 12, fontFamily: Plait.font.mono },
 
-  // Tune chips (persistent bottom row; budget slider unfolds above the chips)
+  // Tune chips (persistent bottom row)
   tuneBar: {
-    gap: 10,
+    flexDirection: 'row',
+    gap: 8,
     paddingHorizontal: Plait.space.md,
     paddingTop: 10,
     paddingBottom: Plait.space.md,
@@ -1145,9 +980,6 @@ const styles = StyleSheet.create({
     borderTopColor: Plait.color.line,
     backgroundColor: Plait.color.paper,
   },
-  tuneRow: { flexDirection: 'row', gap: 8 },
-  tuneChipBudget: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', paddingHorizontal: 14 },
-  tuneChipOpen: { borderColor: Plait.color.green },
   tuneChip: {
     flex: 1,
     alignItems: 'center',
@@ -1163,10 +995,4 @@ const styles = StyleSheet.create({
   tuneChipTextActive: { color: '#FFFFFF' },
 
   emptyPicks: { color: Plait.color.inkSoft, fontSize: 14, lineHeight: 20 },
-  usageLine: {
-    color: Plait.color.inkFaint,
-    fontSize: 11.5,
-    fontFamily: Plait.font.mono,
-    textAlign: 'center',
-  },
 });

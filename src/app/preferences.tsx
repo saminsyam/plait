@@ -14,8 +14,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { SpiceSlider } from '@/components/spice-slider';
 import { PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
-import { parsePreferences } from '@/lib/parsePreferences';
-import type { SpiceLevel } from '@/lib/questionEngine';
+import { parsePreferences } from '@/engine/parsePreferences';
+import type { SpiceLevel } from '@/engine/questionEngine';
 import { useProfile } from '@/state/profile';
 
 const MIN_CHARS = 3;
@@ -74,13 +74,13 @@ export default function PreferencesScreen() {
             value={text}
             onChangeText={setText}
             placeholder="e.g. Halal, allergic to shellfish, high-protein, love spicy food, avoiding gluten"
-            placeholderTextColor={Plait.color.textDim}
+            placeholderTextColor={Plait.color.inkSoft}
             multiline
             numberOfLines={4}
             maxLength={400}
             textAlignVertical="top"
             autoFocus={!isEditing}
-            selectionColor={Plait.color.coral}
+            selectionColor={Plait.color.green}
             editable={!saving}
           />
 
@@ -112,7 +112,7 @@ export default function PreferencesScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Plait.color.background },
+  safe: { flex: 1, backgroundColor: Plait.color.paper },
   flex: { flex: 1 },
   scroll: {
     flexGrow: 1,
@@ -127,9 +127,9 @@ const styles = StyleSheet.create({
     backgroundColor: Plait.color.card,
     borderRadius: Plait.radius.md,
     borderWidth: 1,
-    borderColor: Plait.color.border,
-    color: Plait.color.text,
-    fontFamily: Plait.font.sans,
+    borderColor: Plait.color.line,
+    color: Plait.color.ink,
+    fontFamily: Plait.font.body,
     fontSize: 17,
     lineHeight: 24,
     padding: Plait.space.md,
@@ -137,17 +137,17 @@ const styles = StyleSheet.create({
     maxHeight: 160,
   },
   hintInline: {
-    color: Plait.color.textDim,
+    color: Plait.color.inkSoft,
     fontSize: 13,
     lineHeight: 19,
-    fontFamily: Plait.font.sans,
+    fontFamily: Plait.font.body,
   },
   spiceBlock: { gap: Plait.space.sm },
   spiceLabel: {
-    color: Plait.color.textDim,
+    color: Plait.color.inkSoft,
     fontSize: 14,
     fontWeight: '600',
-    fontFamily: Plait.font.sans,
+    fontFamily: Plait.font.body,
   },
   footer: {
     paddingHorizontal: Plait.space.lg,
@@ -156,9 +156,9 @@ const styles = StyleSheet.create({
     gap: Plait.space.sm,
   },
   hint: {
-    color: Plait.color.textDim,
+    color: Plait.color.inkSoft,
     fontSize: 13,
     textAlign: 'center',
-    fontFamily: Plait.font.sans,
+    fontFamily: Plait.font.body,
   },
 });

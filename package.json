@@ -51,8 +51,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "npx tsx --test src/lib/*.test.ts",
-    "test:watch": "npx tsx --test --watch src/lib/*.test.ts",
+    "test": "npx tsx --test src/engine/*.test.ts",
+    "test:watch": "npx tsx --test --watch src/engine/*.test.ts",
     "eval": "npx tsx scripts/eval.ts"
   },
   "private": true

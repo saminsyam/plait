@@ -1,12 +1,12 @@
 /**
  * Collects pipeline ProgressEvents into an ordered step list for the
- * CookingLoader. Events with a new id append a step; repeat ids update it in
- * place. Timestamps are recorded here so the loader can show real per-step
- * durations.
+ * NarrativeLoader and the picks screen's inline rank status. Events with a
+ * new id append a step; repeat ids update it in place. Timestamps are
+ * recorded here so the loader can show real per-step durations.
  */
 import { useCallback, useState } from 'react';
 
-import type { ProgressEvent } from '@/lib/progress';
+import type { ProgressEvent } from '@/engine/progress';
 
 export type ProgressStep = ProgressEvent & {
   startedAt: number;

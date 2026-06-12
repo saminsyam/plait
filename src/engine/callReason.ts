@@ -1,14 +1,14 @@
 /**
- * Call 2 — Reasoning. Given the menu, the user's answers, dietary preferences,
- * and optional TDEE targets, return exactly 3 ranked picks with macro estimates.
+ * Call 2 — Reasoning. Given the menu, the user's answers, and dietary
+ * preferences, return exactly 3 ranked picks with macro estimates.
  */
 import { callMessagesStream, parseJson } from './anthropic';
 import type { OnProgress } from './progress';
 import type { Answers, MenuItem, Pick, Question } from './types';
 
 const SYSTEM = `You are a friendly menu recommendation engine, like a great waiter.
-Given menu items, the user's question answers, free-text dietary preferences,
-and optional daily macro targets, return exactly 3 ranked picks.
+Given menu items, the user's question answers, and free-text dietary
+preferences, return exactly 3 ranked picks.
 
 For each pick return JSON matching this shape exactly:
 {
@@ -47,7 +47,6 @@ Rules:
   flag = "verify_halal".
 - "why" must name specific ingredients, not generic phrases
 - If fewer than 3 items match cleanly, return 1 or 2 — don't force bad picks
-- If TDEE/macro targets are provided, prioritise dishes that fit the targets best
 - If a restaurant note states the kitchen is halal- or kosher-certified, you do NOT
   need to set flag = "verify_halal" for its dishes — the certification covers it
 
@@ -68,12 +67,6 @@ type ReasonInput = {
    * `needs_verification` in the payload so the model can attach a verify note.
    */
   verifyById?: Record<string, string[]>;
-  tdeeContext?: {
-    calories: number;
-    protein_g: number;
-    carbs_g: number;
-    fat_g: number;
-  } | null;
   /** Whole-menu footer/header notes (halal certs, allergen policies, etc.). */
   restaurantNotes?: string[];
   /**
@@ -81,8 +74,6 @@ type ReasonInput = {
    * on-device). One short context line — lets picks cite real crowd opinion.
    */
   crowdFavorites?: string[];
-  /** Active quick-tune requests ("keep the price down"). One context line. */
-  tuneRequests?: string[];
   /** Live status reporting for the loading screen. */
   onProgress?: OnProgress;
 };
@@ -102,8 +93,8 @@ function slimItem(item: MenuItem): Record<string, unknown> {
   if (item.spice_level > 0) out.spice_level = item.spice_level;
   if (item.dietary_tags.length > 0) out.dietary_tags = item.dietary_tags;
   if (item.protein_type.length > 0) out.protein_type = item.protein_type;
-  // Name-only protein guess from enrichment — grounds the macro estimates and
-  // powers the protein-per-dollar tune. ~4 tokens/item, worth the signal.
+  // Name-only protein guess from enrichment — grounds the macro estimates.
+  // ~4 tokens/item, worth the signal.
   if ((item.protein_g_est ?? 0) > 0) out.protein_g_est = item.protein_g_est;
   return out;
 }
@@ -125,10 +116,8 @@ export async function callReason({
   answers,
   userPreferences,
   verifyById,
-  tdeeContext,
   restaurantNotes,
   crowdFavorites,
-  tuneRequests,
   onProgress,
 }: ReasonInput): Promise<Pick[]> {
   // Annotate the verify survivors so the model knows which picks require a
@@ -147,11 +136,6 @@ export async function callReason({
   };
 
   let contextBlock = `User dietary preferences: "${userPreferences}"\n`;
-  if (tdeeContext) {
-    contextBlock +=
-      `User daily targets: ${tdeeContext.calories} kcal, ` +
-      `Protein ${tdeeContext.protein_g}g, Carbs ${tdeeContext.carbs_g}g, Fat ${tdeeContext.fat_g}g\n`;
-  }
   if (restaurantNotes && restaurantNotes.length > 0) {
     contextBlock += `Restaurant notes (apply to whole menu): ${restaurantNotes
       .map((n) => `"${n}"`)
@@ -162,10 +146,6 @@ export async function callReason({
       .map((n) => `"${n}"`)
       .join(', ')} — worth citing if one becomes a pick.\n`;
   }
-  if (tuneRequests && tuneRequests.length > 0) {
-    contextBlock += `Right now the user also wants: ${tuneRequests.join('; ')}.\n`;
-  }
-
   onProgress?.({
     id: 'rank',
     icon: '👨‍🍳',

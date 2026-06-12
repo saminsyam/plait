@@ -12,8 +12,8 @@
  */
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 
-import type { FilteredItem } from '@/lib/dietaryFilter';
-import type { Answers, MenuItem, Pick, Question, VisionMenuContext } from '@/lib/types';
+import type { FilteredItem } from '@/engine/dietaryFilter';
+import type { Answers, MenuItem, Pick, Question, VisionMenuContext } from '@/engine/types';
 
 type SessionState = {
   imageUri: string | null;

@@ -10,7 +10,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Plait } from '@/constants/plait-theme';
-import { SPICE_LEVELS, type SpiceLevel } from '@/lib/questionEngine';
+import { SPICE_LEVELS, type SpiceLevel } from '@/engine/questionEngine';
 
 export function SpiceSlider({
   value,
@@ -57,25 +57,25 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: Plait.radius.md,
     borderWidth: 1,
-    borderColor: Plait.color.border,
-    backgroundColor: Plait.color.cardElevated,
+    borderColor: Plait.color.line,
+    backgroundColor: Plait.color.card,
   },
   optionActive: {
-    backgroundColor: Plait.color.coral,
-    borderColor: Plait.color.coral,
+    backgroundColor: Plait.color.green,
+    borderColor: Plait.color.green,
   },
   emoji: { fontSize: 26 },
   label: {
-    color: Plait.color.text,
+    color: Plait.color.ink,
     fontSize: 16,
     fontWeight: '700',
-    fontFamily: Plait.font.sans,
+    fontFamily: Plait.font.body,
   },
   labelActive: { color: '#FFFFFF' },
   hint: {
-    color: Plait.color.textDim,
+    color: Plait.color.inkSoft,
     fontSize: 14,
-    fontFamily: Plait.font.sans,
+    fontFamily: Plait.font.body,
     textAlign: 'center',
   },
 });

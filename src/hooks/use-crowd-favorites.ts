@@ -1,125 +1,86 @@
 /**
- * Crowd-favorites lifecycle for the post-scan screen: check the review cache
- * for free, offer a tap-to-fetch (~$0.02) when there's nothing cached, match
- * returned dish names to scanned items on-device (zero tokens), and record
- * the matches into the session so the ranking call can cite them.
+ * Crowd-favorites lifecycle for the picks screen — Sushi 2.1 makes it fully
+ * automatic: check the review cache for free, and when there's nothing cached
+ * fire ONE background review search (~$0.02) without blocking anything. The
+ * ★ crowd-favorite badges simply appear on the cards when the data lands.
  *
- * The dietary gate is folded into the tile: a review favorite that maps to a
- * gate-BLOCKED dish still shows its honest "on this menu" badge but carries
- * the gate's reasons as an inline ⚠️, and never enters the session map the
- * ranking context reads.
+ * Matching returned dish names to scanned items is pure on-device string work
+ * (zero tokens), and the dietary gate still rules: a review favorite that maps
+ * to a gate-BLOCKED dish never enters the session map the ranking context
+ * reads — honest data, same safety invariant.
  *
  * `crowdReady` flips true once the initial cache check has resolved — the
- * instant rank waits for it so cached crowd favorites make it into the very
- * first ranking call instead of racing it.
- *
- * Owns its own useProgressSteps so the tile's loading line shows the REAL
- * latest pipeline status — independent of any other progress stream.
+ * instant rank waits for it so CACHED crowd favorites make it into the very
+ * first ranking call instead of racing it. The background fetch is never
+ * waited on; its names only feed later re-ranks (refine).
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import type { CrowdFavoriteEntry, CrowdFavoritesState } from '@/components/restaurant-summary';
-import { useProgressSteps } from '@/hooks/use-progress-steps';
-import { callReviews, getCachedReviews, type ReviewsResult } from '@/lib/callReviews';
-import { gateCrowdFavorites, matchCrowdFavorites } from '@/lib/matchReviews';
+import { callReviews, getCachedReviews, type ReviewsResult } from '@/engine/callReviews';
+import {
+  gateCrowdFavorites,
+  matchCrowdFavorites,
+  type GatedFavorite,
+} from '@/engine/matchReviews';
 import { useSession } from '@/state/session';
 
-/** Where the crowd-favorites tile is in its lifecycle. */
-type ReviewPhase =
-  | { status: 'hidden' } // no restaurant name read → nothing to search for
-  | { status: 'offer' } // nothing cached → tap-to-fetch
-  | { status: 'loading' }
-  | { status: 'loaded'; entries: CrowdFavoriteEntry[] }
-  | { status: 'empty' } // search ran dry
-  | { status: 'error' };
-
-export function useCrowdFavorites(): { crowdState: CrowdFavoritesState; crowdReady: boolean } {
+export function useCrowdFavorites(): {
+  /** Loaded review favorites (empty until the cache or the fetch lands). */
+  crowdEntries: GatedFavorite[];
+  /** True once the (local, fast) cache check has resolved. */
+  crowdReady: boolean;
+} {
   const { menuContext, items, blocked, setCrowdFavorites } = useSession();
   const restaurantName = menuContext?.restaurant_name.trim() ?? '';
 
-  const [reviewPhase, setReviewPhase] = useState<ReviewPhase>({ status: 'hidden' });
+  const [crowdEntries, setCrowdEntries] = useState<GatedFavorite[]>([]);
   const [crowdReady, setCrowdReady] = useState(false);
-  const { steps, onProgress, resetProgress } = useProgressSteps();
+  // One background search per restaurant, even across re-renders of the screen.
+  const fetchedFor = useRef<string | null>(null);
 
-  // Fold a fetched/cached review result into the tile + the session map the
-  // ranking call reads. Matching is pure string work — zero tokens; blocked
-  // matches get the gate's warning and stay out of the rankable map.
-  const applyReviews = useCallback(
-    (r: ReviewsResult) => {
-      if (!r.found) {
-        setReviewPhase({ status: 'empty' });
-        return;
-      }
+  useEffect(() => {
+    if (!restaurantName) {
+      setCrowdReady(true);
+      return;
+    }
+    let active = true;
+
+    // Fold a cached/fetched result into the badges + the session map the
+    // ranking call reads. Blocked matches stay out of the rankable map.
+    const applyReviews = (r: ReviewsResult) => {
+      if (!active || !r.found) return;
       const { entries, rankable } = gateCrowdFavorites(
         matchCrowdFavorites(r.crowd_favorites, items),
         blocked
       );
       setCrowdFavorites(rankable);
-      setReviewPhase({ status: 'loaded', entries });
-    },
-    [items, blocked, setCrowdFavorites]
-  );
+      setCrowdEntries(entries);
+    };
 
-  // Cached reviews are free — light the tile up without spending anything.
-  // No cache → offer the fetch; the baseline scan stays exactly as cheap.
-  useEffect(() => {
-    if (!restaurantName) {
-      setReviewPhase({ status: 'hidden' });
-      setCrowdReady(true);
-      return;
-    }
-    let active = true;
     (async () => {
       const cached = await getCachedReviews(restaurantName);
       if (!active) return;
-      if (cached) applyReviews(cached);
-      else setReviewPhase({ status: 'offer' });
+      if (cached) {
+        applyReviews(cached);
+        setCrowdReady(true);
+        return;
+      }
       setCrowdReady(true);
+      // Nothing cached → one silent background search; badges pop in when it
+      // lands. A dry or failed search just means no badges — never an error UI.
+      if (fetchedFor.current === restaurantName) return;
+      fetchedFor.current = restaurantName;
+      try {
+        applyReviews(await callReviews(restaurantName, ''));
+      } catch {
+        // Offline / search failed — the picks stand on their own.
+      }
     })();
+
     return () => {
       active = false;
     };
-  }, [restaurantName, applyReviews]);
+  }, [restaurantName, items, blocked, setCrowdFavorites]);
 
-  const fetchReviews = () => {
-    setReviewPhase({ status: 'loading' });
-    resetProgress();
-    (async () => {
-      try {
-        applyReviews(await callReviews(restaurantName, '', onProgress));
-      } catch {
-        setReviewPhase({ status: 'error' });
-      }
-    })();
-  };
-
-  // Map the local lifecycle onto the shared component's tile state. While
-  // loading, surface the REAL latest pipeline status line — never a fake timer.
-  const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
-  let crowdState: CrowdFavoritesState;
-  switch (reviewPhase.status) {
-    case 'offer':
-      crowdState = { kind: 'offer', onFetch: fetchReviews };
-      break;
-    case 'loading':
-      crowdState = {
-        kind: 'loading',
-        statusLine: lastStep
-          ? `${lastStep.label}${lastStep.detail ? ` — ${lastStep.detail}` : ''}`
-          : null,
-      };
-      break;
-    case 'loaded':
-      crowdState = { kind: 'loaded', favorites: reviewPhase.entries };
-      break;
-    case 'empty':
-      crowdState = { kind: 'empty' };
-      break;
-    case 'error':
-      crowdState = { kind: 'empty', message: 'Review lookup failed — couldn’t reach the web.' };
-      break;
-    default:
-      crowdState = { kind: 'hidden' };
-  }
-  return { crowdState, crowdReady };
+  return { crowdEntries, crowdReady };
 }

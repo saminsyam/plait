@@ -43,10 +43,10 @@ function check(name: string, pass: boolean, info?: string) {
 async function main() {
   loadEnv();
 
-  const { applyHardGate } = await import('../src/lib/dietaryFilter');
-  const { getUsage, formatUsd } = await import('../src/lib/usage');
-  type Constraints = import('../src/lib/dietaryFilter').HardConstraints;
-  type Item = import('../src/lib/types').MenuItem;
+  const { applyHardGate } = await import('../src/engine/dietaryFilter');
+  const { getUsage, formatUsd } = await import('../src/engine/usage');
+  type Constraints = import('../src/engine/dietaryFilter').HardConstraints;
+  type Item = import('../src/engine/types').MenuItem;
 
   const CONSTRAINTS: Constraints = [
     { kind: 'religious', rule: 'halal' },
@@ -95,9 +95,9 @@ async function main() {
     console.log('\n⚠️  No API key — skipping live stages. Offline results only.');
   } else {
     console.log('\n── Stage 2: live pipeline (prefs → enrich → gate → rank) ──');
-    const { parsePreferences } = await import('../src/lib/parsePreferences');
-    const { buildScanFromLookup } = await import('../src/lib/callLookup');
-    const { callReason } = await import('../src/lib/callReason');
+    const { parsePreferences } = await import('../src/engine/parsePreferences');
+    const { buildScanFromLookup } = await import('../src/engine/callLookup');
+    const { callReason } = await import('../src/engine/callReason');
 
     // 2a. Smart-parse free-text preferences into hard constraints.
     const parsed = await parsePreferences('halal, allergic to shellfish, high-protein');
@@ -134,8 +134,8 @@ async function main() {
     check('a rankable candidate pool survives', candidates.length >= 4, `${candidates.length} candidates`);
 
     // 2d. Rank with Sonnet exactly like the app's INSTANT path: empty Q/A,
-    // profile spice ceiling pre-trimming the pool, TDEE targets in play.
-    const { filterBySpice, DEFAULT_SPICE } = await import('../src/lib/questionEngine');
+    // profile spice ceiling pre-trimming the pool.
+    const { filterBySpice, DEFAULT_SPICE } = await import('../src/engine/questionEngine');
     const instantPool = filterBySpice(candidates, DEFAULT_SPICE);
     check('spice pre-trim keeps a rankable pool', instantPool.length >= 1, `${instantPool.length} of ${candidates.length}`);
     const picks = await callReason({
@@ -144,7 +144,6 @@ async function main() {
       answers: {},
       userPreferences: 'halal, allergic to shellfish, high-protein',
       verifyById: Object.fromEntries(liveGate.verify.map((v) => [v.item.id, v.reasons])),
-      tdeeContext: { calories: 2400, protein_g: 160, carbs_g: 250, fat_g: 70 },
       restaurantNotes: [],
     });
     const candidateIds = new Set(instantPool.map((i) => i.id));
@@ -160,7 +159,7 @@ async function main() {
     const imgPath = imgArg ? resolve(process.cwd(), imgArg) : resolve(process.cwd(), 'test-menu.jpg');
     if (existsSync(imgPath)) {
       console.log('\n── Stage 3: live Vision read ──');
-      const { callVision } = await import('../src/lib/callVision');
+      const { callVision } = await import('../src/engine/callVision');
       const base64 = readFileSync(imgPath).toString('base64');
       const vision = await callVision(base64);
       check('vision reads at least 5 dishes', vision.items.length >= 5, `${vision.items.length} items`);

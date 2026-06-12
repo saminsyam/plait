@@ -41,11 +41,11 @@ async function main() {
   }
 
   // Dynamic imports so loadEnv() runs first.
-  const { callVision } = await import('../src/lib/callVision');
-  const { callReason } = await import('../src/lib/callReason');
-  const { applyHardGate } = await import('../src/lib/dietaryFilter');
-  const { parsePreferences } = await import('../src/lib/parsePreferences');
-  const engine = await import('../src/lib/questionEngine');
+  const { callVision } = await import('../src/engine/callVision');
+  const { callReason } = await import('../src/engine/callReason');
+  const { applyHardGate } = await import('../src/engine/dietaryFilter');
+  const { parsePreferences } = await import('../src/engine/parsePreferences');
+  const engine = await import('../src/engine/questionEngine');
 
   // Canonical benchmark profile: free-text preferences are smart-parsed into
   // hard constraints (halal → deterministic gate), while the full text also
@@ -83,7 +83,7 @@ async function main() {
     const q = engine.nextQuestion(pool, asked);
     if (!q) break;
     const opt = q.options[0];
-    console.log(`     Q "${q.question_text}" -> ${opt.label} (${opt.count})`);
+    console.log(`     Q "${q.question}" -> ${opt.label} (${opt.count})`);
     pool = engine.filterByFacet(pool, q.facetId, opt.value);
     choices.push(engine.facetChoice(q, opt));
     asked.add(q.facetId);

@@ -1,7 +1,7 @@
 /**
  * Unit tests for the deterministic dietary hard-gate.
  *
- *   npx tsx --test src/lib/dietaryFilter.test.ts
+ *   npx tsx --test src/engine/dietaryFilter.test.ts
  *   (or: npm test)
  *
  * Pure functions only — no API key, no network. These are the Phase-1 gate.

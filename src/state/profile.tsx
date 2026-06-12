@@ -1,29 +1,23 @@
 /**
  * Persistent user profile (survives across scans and app restarts), stored in
- * AsyncStorage. Holds the optional TDEE / macro goals, the free-text dietary
- * preferences, and the structured hard constraints derived from them.
+ * AsyncStorage. Holds the free-text dietary preferences, the structured hard
+ * constraints derived from them, and the once-asked spice ceiling.
  *
  * Storage keys (flat):
- *   tdee_completed        "true" once the TDEE step is done (saved OR skipped)
- *   tdee_calories/...     macro numbers (absent if skipped)
  *   preferences_completed "true" once the preferences step is done
  *   user_preferences      raw free-text string
  *   hard_constraints      JSON-encoded HardConstraints (feeds the dietary gate)
+ *   spice_ceiling         1 | 2 | 3
  *
  * This is separate from the per-scan <SessionProvider>, which resets every scan.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import type { HardConstraints } from '@/lib/dietaryFilter';
-import { DEFAULT_SPICE, parseSpiceCeiling, type SpiceLevel } from '@/lib/questionEngine';
+import type { HardConstraints } from '@/engine/dietaryFilter';
+import { DEFAULT_SPICE, parseSpiceCeiling, type SpiceLevel } from '@/engine/questionEngine';
 
 const K = {
-  tdeeCompleted: 'tdee_completed',
-  calories: 'tdee_calories',
-  protein: 'tdee_protein_g',
-  carbs: 'tdee_carbs_g',
-  fat: 'tdee_fat_g',
   prefsCompleted: 'preferences_completed',
   preferences: 'user_preferences',
   // Structured, machine-checkable hard constraints (allergens + religious
@@ -35,21 +29,9 @@ const K = {
   spiceCeiling: 'spice_ceiling',
 } as const;
 
-/** Daily macro/calorie targets, computed on-device from the TDEE calculator. */
-export type TdeeGoals = {
-  calories: number;
-  protein_g: number;
-  carbs_g: number;
-  fat_g: number;
-};
-
 type ProfileValue = {
   /** True once the initial AsyncStorage read has finished. */
   loaded: boolean;
-  /** Whether the user has finished the TDEE onboarding step (saved or skipped). */
-  tdeeCompleted: boolean;
-  /** Macro goals, or null if the user skipped the TDEE step. */
-  tdee: TdeeGoals | null;
   /** Whether the user has finished the preferences onboarding step. */
   prefsCompleted: boolean;
   /** Raw free-text dietary preferences, or null if not set yet. */
@@ -58,8 +40,6 @@ type ProfileValue = {
   hardConstraints: HardConstraints;
   /** Usual heat ceiling (1 mild · 2 medium · 3 hot). Defaults to medium. */
   spiceCeiling: SpiceLevel;
-  /** Persist TDEE goals (or null when the user skips) and mark the step done. */
-  completeTdee: (goals: TdeeGoals | null) => Promise<void>;
   /** Persist preferences text and mark the step done. */
   savePreferences: (text: string) => Promise<void>;
   /** Persist the structured hard constraints (smart-parsed from the text). */
@@ -72,8 +52,6 @@ const ProfileContext = createContext<ProfileValue | null>(null);
 
 export function ProfileProvider({ children }: { children: ReactNode }) {
   const [loaded, setLoaded] = useState(false);
-  const [tdeeCompleted, setTdeeCompleted] = useState(false);
-  const [tdee, setTdee] = useState<TdeeGoals | null>(null);
   const [prefsCompleted, setPrefsCompleted] = useState(false);
   const [preferences, setPreferences] = useState<string | null>(null);
   const [hardConstraints, setHardConstraints] = useState<HardConstraints>([]);
@@ -84,11 +62,6 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         const entries = await AsyncStorage.multiGet([
-          K.tdeeCompleted,
-          K.calories,
-          K.protein,
-          K.carbs,
-          K.fat,
           K.prefsCompleted,
           K.preferences,
           K.hardConstraints,
@@ -97,15 +70,6 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         if (!active) return;
         const map = Object.fromEntries(entries) as Record<string, string | null>;
 
-        setTdeeCompleted(map[K.tdeeCompleted] === 'true');
-        if (map[K.calories] != null) {
-          setTdee({
-            calories: Number(map[K.calories]),
-            protein_g: Number(map[K.protein]),
-            carbs_g: Number(map[K.carbs]),
-            fat_g: Number(map[K.fat]),
-          });
-        }
         setPrefsCompleted(map[K.prefsCompleted] === 'true');
         if (map[K.preferences]) setPreferences(map[K.preferences]);
         setHardConstraints(parseHardConstraints(map[K.hardConstraints]));
@@ -119,24 +83,6 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
     };
-  }, []);
-
-  const completeTdee = useCallback(async (goals: TdeeGoals | null) => {
-    setTdee(goals);
-    setTdeeCompleted(true);
-    if (goals) {
-      await AsyncStorage.multiSet([
-        [K.tdeeCompleted, 'true'],
-        [K.calories, String(goals.calories)],
-        [K.protein, String(goals.protein_g)],
-        [K.carbs, String(goals.carbs_g)],
-        [K.fat, String(goals.fat_g)],
-      ]);
-    } else {
-      // Skipped: mark done but clear any stale macro values.
-      await AsyncStorage.multiRemove([K.calories, K.protein, K.carbs, K.fat]);
-      await AsyncStorage.setItem(K.tdeeCompleted, 'true');
-    }
   }, []);
 
   const savePreferences = useCallback(async (text: string) => {
@@ -162,26 +108,20 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ProfileValue>(
     () => ({
       loaded,
-      tdeeCompleted,
-      tdee,
       prefsCompleted,
       preferences,
       hardConstraints,
       spiceCeiling,
-      completeTdee,
       savePreferences,
       saveHardConstraints,
       saveSpiceCeiling,
     }),
     [
       loaded,
-      tdeeCompleted,
-      tdee,
       prefsCompleted,
       preferences,
       hardConstraints,
       spiceCeiling,
-      completeTdee,
       savePreferences,
       saveHardConstraints,
       saveSpiceCeiling,

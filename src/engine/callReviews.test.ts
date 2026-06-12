@@ -2,7 +2,7 @@
  * Unit tests for the review-cache policy in callReviews — key normalization,
  * the 14-day TTL, and model-output coercion.
  *
- *   npx tsx --test src/lib/callReviews.test.ts
+ *   npx tsx --test src/engine/callReviews.test.ts
  *   (or: npm test)
  *
  * Pure functions only — no API key, no network, no AsyncStorage.

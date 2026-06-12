@@ -14,7 +14,7 @@
  * Results are cached in AsyncStorage keyed by the normalized restaurant name
  * with a 14-day TTL, so the scan flow can surface crowd favorites for free.
  * AsyncStorage is lazy-required (with an in-memory fallback) so this module —
- * like the rest of src/lib — stays importable in plain Node for the eval and
+ * like the rest of src/engine — stays importable in plain Node for the eval and
  * test scripts.
  *
  * Like callLookup, the web-search loop bypasses callMessages (it needs the

@@ -1,7 +1,7 @@
 /**
  * Unit tests for the refine-nudge heuristic — deterministic, pure.
  *
- *   npx tsx --test src/lib/refineNudge.test.ts
+ *   npx tsx --test src/engine/refineNudge.test.ts
  *   (or: npm test)
  */
 import assert from 'node:assert/strict';
