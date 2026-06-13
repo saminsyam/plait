@@ -203,8 +203,14 @@ const FACETS: Facet[] = [
 // Building + selecting questions
 // ---------------------------------------------------------------------------
 
-export const TARGET_POOL = 4; // stop narrowing once the pool is this small
+// Slate-era target: the ranker returns up to 8 picks and the tune chips need
+// that material, so narrowing stops at a rankable lane, not a shortlist.
+// (The old value of 4 predates wide slates; the corpus eval showed it let
+// every custom rank run over a pool crashed to a single dish.)
+export const TARGET_POOL = 8; // stop narrowing once the pool is this small
 export const MAX_DYNAMIC_QUESTIONS = 3; // besides the constant spice question
+/** Below this, a re-rank has nothing to discriminate and chips no material. */
+export const MIN_RANK_POOL = 3;
 
 export type EngineOption = { value: string; label: string; emoji: string; count: number };
 export type EngineQuestion = { facetId: string; question: string; options: EngineOption[] };
@@ -245,6 +251,25 @@ export function filterByFacet(pool: MenuItem[], facetId: string, value: string):
 /** True once we should stop asking and move to recommendations. */
 export function shouldStopNarrowing(pool: MenuItem[], dynamicAsked: number): boolean {
   return pool.length <= TARGET_POOL || dynamicAsked >= MAX_DYNAMIC_QUESTIONS;
+}
+
+/**
+ * The pool the ONE re-rank should receive after narrowing. The user's
+ * surviving dishes always lead, but when the final answer crashed the pool
+ * below MIN_RANK_POOL (corpus finding: every real custom rank ran over a pool
+ * of exactly 1), backfill from the pre-answer pool up to TARGET_POOL. The Q&A
+ * context still steers the model, so the user's lane ranks first while the
+ * slate keeps real material. Never mutates its inputs.
+ */
+export function widenRankPool(narrowed: MenuItem[], previous: MenuItem[]): MenuItem[] {
+  if (narrowed.length >= MIN_RANK_POOL) return narrowed;
+  const have = new Set(narrowed.map((i) => i.id));
+  const out = [...narrowed];
+  for (const item of previous) {
+    if (out.length >= TARGET_POOL) break;
+    if (!have.has(item.id)) out.push(item);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

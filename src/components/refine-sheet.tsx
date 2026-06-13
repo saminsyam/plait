@@ -20,6 +20,7 @@ import {
   nextQuestion,
   shouldStopNarrowing,
   spiceChoice,
+  widenRankPool,
   type EngineChoice,
   type EngineOption,
   type EngineQuestion,
@@ -86,7 +87,10 @@ export function RefineSheet({
     setChoices(nextChoices);
     setDynamicCount(nextDynamic);
     if (shouldStopNarrowing(np, nextDynamic) || nextQuestion(np, nextAsked) === null) {
-      onDone(np, nextChoices);
+      // If this answer crashed the pool below rankable size, hand back a
+      // widened pool — the user's lane first, pre-answer dishes as backfill —
+      // so the ONE re-rank still has material. The Q&A keeps steering the model.
+      onDone(widenRankPool(np, pool), nextChoices);
     }
   };
 

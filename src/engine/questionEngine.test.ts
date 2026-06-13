@@ -12,10 +12,13 @@ import {
   facetChoice,
   filterByFacet,
   filterBySpice,
+  MIN_RANK_POOL,
   nextQuestion,
   parseSpiceCeiling,
   shouldStopNarrowing,
   spiceChoice,
+  TARGET_POOL,
+  widenRankPool,
 } from './questionEngine';
 
 function dish(p: Partial<MenuItem> & { name: string }): MenuItem {
@@ -91,10 +94,53 @@ test('filterBySpice maps tolerance to dish heat, falls back if all too hot', () 
   assert.deepEqual(filterBySpice(fiery, 1), fiery); // nothing survives → keep pool
 });
 
+// A pool wider than TARGET_POOL, for tests that need narrowing to keep going.
+const wideMenu: MenuItem[] = [
+  ...menu,
+  dish({ name: 'Tea Leaf Salad', dietary_tags: ['vegetarian'] }),
+  dish({ name: 'Coconut Rice', dietary_tags: ['vegan'] }),
+  dish({ name: 'Garlic Noodles', dietary_tags: ['vegetarian'] }),
+];
+
 test('shouldStopNarrowing stops on small pool or question cap', () => {
-  assert.equal(shouldStopNarrowing(menu, 0), false);
-  assert.equal(shouldStopNarrowing(menu.slice(0, 3), 0), true); // pool ≤ TARGET
-  assert.equal(shouldStopNarrowing(menu, 3), true); // dynamic cap reached
+  assert.ok(wideMenu.length > TARGET_POOL); // fixture guard
+  assert.equal(shouldStopNarrowing(wideMenu, 0), false);
+  assert.equal(shouldStopNarrowing(menu, 0), true); // pool ≤ TARGET (slate-era 8)
+  assert.equal(shouldStopNarrowing(menu.slice(0, 3), 0), true);
+  assert.equal(shouldStopNarrowing(wideMenu, 3), true); // dynamic cap reached
+});
+
+test('widenRankPool leaves a rankable pool untouched', () => {
+  const narrowed = menu.slice(0, MIN_RANK_POOL);
+  assert.deepEqual(widenRankPool(narrowed, menu), narrowed);
+});
+
+test('widenRankPool backfills a crashed pool from the pre-answer pool', () => {
+  // The corpus case: an answer narrowed the pool to a single dish.
+  const narrowed = [menu[6]]; // Burmese Shrimp
+  const widened = widenRankPool(narrowed, wideMenu);
+  // The user's lane leads, backfill follows in pre-answer order, no dupes.
+  assert.equal(widened[0].name, 'Burmese Shrimp');
+  assert.equal(widened.length, TARGET_POOL);
+  assert.equal(new Set(widened.map((d) => d.id)).size, widened.length);
+  assert.equal(widened.filter((d) => d.name === 'Burmese Shrimp').length, 1);
+  // Backfill preserves the previous pool's order.
+  assert.equal(widened[1].name, wideMenu[0].name);
+});
+
+test('widenRankPool uses everything when the previous pool is small', () => {
+  const previous = menu.slice(0, 4);
+  const widened = widenRankPool([menu[0]], previous);
+  assert.equal(widened.length, 4); // 1 + 3 backfill — all there is
+  assert.deepEqual(new Set(widened.map((d) => d.id)), new Set(previous.map((d) => d.id)));
+});
+
+test('widenRankPool never mutates its inputs', () => {
+  const narrowed = [menu[6]];
+  const before = [...wideMenu];
+  widenRankPool(narrowed, wideMenu);
+  assert.deepEqual(narrowed, [menu[6]]);
+  assert.deepEqual(wideMenu, before);
 });
 
 test('choicesToQA round-trips spice + facet choices into Question/Answers', () => {
@@ -108,7 +154,7 @@ test('choicesToQA round-trips spice + facet choices into Question/Answers', () =
 });
 
 test('a full narrowing run converges to a small candidate set', () => {
-  let pool = filterBySpice(menu, 3);
+  let pool = filterBySpice(wideMenu, 3);
   const asked = new Set<string>();
   let dynamic = 0;
   while (!shouldStopNarrowing(pool, dynamic)) {
