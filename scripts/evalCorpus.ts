@@ -170,7 +170,7 @@ async function main() {
   const mainRanks = ranks.filter((r) => (r.payload as RankPayload).mode !== 'keto');
   const sizeInfo = mainRanks.map((r) => {
     const p = r.payload as RankPayload;
-    return { pool: p.pool_ids.length, slate: p.slate.length, mode: p.mode };
+    return { pool: p.pool_ids.length, slate: p.slate.length, mode: p.mode, created_at: r.created_at };
   });
   stat('pool → slate (popular/custom)', sizeInfo.map((s) => `${s.pool}→${s.slate}`).join(', ') || '–');
   // A slate can't be wider than its pool — a custom rank over a refine-narrowed
@@ -184,9 +184,18 @@ async function main() {
   // Engine-tuning signal, not a model failure: a custom pool this small means
   // the refine flow over-narrowed — the re-rank has nothing left to rank and
   // the chips get no material. (Fix lives in the narrowing rules, not the prompt.)
-  const overNarrowed = sizeInfo.filter((s) => s.mode === 'custom' && s.pool < 3).length;
-  if (overNarrowed > 0) {
-    stat('⚠ custom ranks over a pool < 3 (refine over-narrowed)', `${overNarrowed}`);
+  // The widenRankPool fix (commit 3a01707) landed 2026-06-12 17:04 PT. Traces
+  // before it can't have benefited, so split the count — only post-fix offenders
+  // are a live regression; pre-fix ones are expected historical noise.
+  const POOL_FIX_AT = Date.parse('2026-06-13T00:04:00Z');
+  const overNarrowed = sizeInfo.filter((s) => s.mode === 'custom' && s.pool < 3);
+  if (overNarrowed.length > 0) {
+    const post = overNarrowed.filter((s) => Date.parse(s.created_at) >= POOL_FIX_AT).length;
+    const pre = overNarrowed.length - post;
+    stat(
+      '⚠ custom ranks over a pool < 3 (refine over-narrowed)',
+      `${overNarrowed.length} (${pre} pre-fix, ${post} post-fix${post > 0 ? ' ← REGRESSION' : ''})`
+    );
   }
   let scorePairs = 0;
   let scoreOrdered = 0;
