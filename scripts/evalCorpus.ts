@@ -40,6 +40,8 @@ function loadEnv() {
 
 // ── Row shapes (what scanCorpus.ts writes) ──────────────────────────────────
 type ScanPayload = {
+  /** Where the items came from — absent on traces written before slice 1. */
+  source?: 'vision' | 'menu_cache';
   items: MenuItem[];
   menu_context: VisionMenuContext;
   gate: {
@@ -274,6 +276,32 @@ async function main() {
   } else {
     stat('keto traces', 'none yet — toggle Keto? on a scan to start measuring');
   }
+
+  // ── Caches (Phase 3 — token savings) ─────────────────────────────────────
+  console.log('\n── Caches ──');
+  // Menu-cache hit rate from the scan traces' source tag. Traces written
+  // before slice 1 have no source — count them as 'vision' (the old behavior).
+  const cacheHits = scans.filter((s) => (s.payload as ScanPayload).source === 'menu_cache').length;
+  const taggedScans = scans.filter((s) => (s.payload as ScanPayload).source !== undefined).length;
+  stat(
+    'menu-cache hit rate (vision reads skipped)',
+    `${pct(cacheHits, scans.length)} (${cacheHits}/${scans.length})` +
+      (taggedScans < scans.length ? ` · ${scans.length - taggedScans} pre-slice-1 scans counted as vision` : '')
+  );
+  // Cache-table sizes — how much corpus the runtime caches have banked.
+  const sizeOf = async (table: string): Promise<number | null> => {
+    const { count, error: e } = await supabase.from(table).select('*', { count: 'exact', head: true });
+    return e ? null : count ?? 0;
+  };
+  const [menuRows, reviewRows, detailRows] = await Promise.all([
+    sizeOf('menu_cache'),
+    sizeOf('review_cache'),
+    sizeOf('dish_detail_cache'),
+  ]);
+  const rowLabel = (n: number | null) => (n === null ? 'table missing — run the schema section' : `${n} rows`);
+  stat('menu_cache', rowLabel(menuRows));
+  stat('review_cache (shared)', rowLabel(reviewRows));
+  stat('dish_detail_cache', rowLabel(detailRows));
 
   // ── Report ──────────────────────────────────────────────────────────────
   const failed = checks.filter((c) => !c.pass);
