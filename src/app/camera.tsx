@@ -6,15 +6,14 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { NarrativeLoader } from '@/components/narrative-loader';
 import { Body, Loading, PrimaryButton, Subtitle, Title } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
-import { APP_VERSION } from '@/constants/version';
 import { useProgressSteps } from '@/hooks/use-progress-steps';
 import { callVision } from '@/engine/callVision';
 import { getCachedReviews } from '@/engine/callReviews';
@@ -24,101 +23,26 @@ import { gateCrowdFavorites, matchCrowdFavorites } from '@/engine/matchReviews';
 import { filterBySpice } from '@/engine/questionEngine';
 import { rankFromPool } from '@/engine/rankFromPool';
 import type { MenuItem, VisionMenuContext } from '@/engine/types';
-import { listRecentMenus, loadMenuCache, saveMenuCache, type RecentMenu } from '@/lib/menuCache';
+import { ageLabel, loadMenuCache, saveMenuCache, type RecentMenu } from '@/lib/menuCache';
 import { beginScanTrace, logRankTrace } from '@/lib/scanCorpus';
 import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
 
 type Shot = { uri: string };
 
-/**
- * The corner element: one ☰ button, one top sheet with everything that is
- * NOT the golden path. `dark` renders the button as an on-camera pill.
- */
-function CornerMenu({ dark }: { dark?: boolean }) {
+/** Back to the dashboard. `dark` renders it as an on-camera pill. */
+function BackButton({ dark }: { dark?: boolean }) {
   const router = useRouter();
-  const { preferences } = useProfile();
-  const [open, setOpen] = useState(false);
-  // Hidden developer door: 5 taps on the version label opens token-usage stats.
-  const versionTaps = useRef(0);
-  const go = (path: string) => {
-    setOpen(false);
-    router.push(path as Parameters<typeof router.push>[0]);
-  };
-  const tapVersion = () => {
-    versionTaps.current += 1;
-    if (versionTaps.current >= 5) {
-      versionTaps.current = 0;
-      go('/stats');
-    }
-  };
-
   return (
-    <>
-      <Pressable
-        onPress={() => setOpen(true)}
-        hitSlop={10}
-        accessibilityRole="button"
-        accessibilityLabel="Menu"
-        style={[menu.button, dark && menu.buttonDark]}>
-        <Text style={[menu.buttonIcon, dark && menu.buttonIconDark]}>☰</Text>
-      </Pressable>
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <Pressable style={menu.backdrop} onPress={() => setOpen(false)}>
-          <Pressable style={menu.sheet} onPress={() => {}}>
-            <View style={menu.head}>
-              <Text style={menu.logo}>
-                pl<Text style={{ color: Plait.color.green }}>AI</Text>t
-              </Text>
-              <Pressable onPress={tapVersion} hitSlop={8}>
-                <Text style={menu.version}>{APP_VERSION}</Text>
-              </Pressable>
-            </View>
-            <MenuRow
-              icon="✎"
-              label="Dietary profile"
-              sub={preferences ?? 'tell me what you avoid'}
-              onPress={() => go('/preferences?edit=1')}
-            />
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </>
-  );
-}
-
-function MenuRow({
-  icon,
-  label,
-  sub,
-  onPress,
-}: {
-  icon: string;
-  label: string;
-  sub: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [menu.row, pressed && { opacity: 0.7 }]}>
-      <Text style={menu.rowIcon}>{icon}</Text>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={menu.rowLabel}>{label}</Text>
-        <Text style={menu.rowSub} numberOfLines={1}>
-          {sub}
-        </Text>
-      </View>
-      <Text style={menu.rowChevron}>›</Text>
+    <Pressable
+      onPress={() => router.back()}
+      hitSlop={10}
+      accessibilityRole="button"
+      accessibilityLabel="Back"
+      style={[back.button, dark && back.buttonDark]}>
+      <Text style={[back.icon, dark && back.iconDark]}>‹</Text>
     </Pressable>
   );
-}
-
-/** "today" / "3d ago" / "2w ago" — quiet age tag for a recent-place chip. */
-function ageLabel(iso: string): string {
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
-  if (days <= 0) return 'today';
-  if (days < 7) return `${days}d ago`;
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
-  return `${Math.floor(days / 30)}mo ago`;
 }
 
 /** Turn an error from the Vision pipeline into a friendly, actionable message. */
@@ -138,20 +62,37 @@ export default function CameraScreen() {
   const router = useRouter();
   const session = useSession();
   const { hardConstraints, preferences, spiceCeiling } = useProfile();
+  // Deep-link params from the dashboard: ?recent=<key>&name=&at= reopens a
+  // cached menu (zero vision tokens); ?upload=1 jumps straight to the library.
+  const params = useLocalSearchParams<{ recent?: string; name?: string; at?: string; upload?: string }>();
   const cameraRef = useRef<CameraView>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [shot, setShot] = useState<Shot | null>(null);
-  const [busy, setBusy] = useState(false);
+  // Start in the loader when arriving via a recent-place deep link, so the
+  // camera view never flashes before the cache load.
+  const [busy, setBusy] = useState(!!params.recent);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { steps, onProgress, resetProgress } = useProgressSteps();
   const [loaderTitle, setLoaderTitle] = useState('Reading your menu');
 
-  // Recent places — cached menus that re-enter the flow with ZERO vision
-  // tokens. Empty (row hidden) when Supabase is unconfigured or offline.
-  const [recents, setRecents] = useState<RecentMenu[]>([]);
+  // Run a dashboard deep link exactly once on mount.
+  const autoRan = useRef(false);
   useEffect(() => {
-    listRecentMenus().then(setRecents).catch(() => {});
+    if (autoRan.current) return;
+    if (params.recent) {
+      autoRan.current = true;
+      openRecent({
+        restaurantKey: params.recent,
+        restaurant: params.name ?? 'your spot',
+        cuisine: '',
+        scannedAt: params.at ?? new Date().toISOString(),
+      });
+    } else if (params.upload) {
+      autoRan.current = true;
+      void pickFromLibrary();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Pick an existing photo from the library — works even if camera is denied.
@@ -190,7 +131,7 @@ export default function CameraScreen() {
     return (
       <SafeAreaView style={styles.gate}>
         <View style={styles.gateTop}>
-          <CornerMenu />
+          <BackButton />
         </View>
         <View style={styles.gateBody}>
           <Title style={{ fontSize: 32 }}>Camera access</Title>
@@ -200,22 +141,6 @@ export default function CameraScreen() {
           <PrimaryButton label="Allow camera" onPress={requestPermission} />
           <PrimaryButton label="🖼  Upload a photo" variant="soft" onPress={pickFromLibrary} />
           {error && <Body style={styles.error}>{error}</Body>}
-          {recents.length > 0 && (
-            <View style={styles.recentRow}>
-              {recents.map((r) => (
-                <Pressable
-                  key={r.restaurantKey}
-                  onPress={() => openRecent(r)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Reopen the saved ${r.restaurant} menu`}
-                  style={styles.recentChipLight}>
-                  <Text style={styles.recentTextLight} numberOfLines={1}>
-                    ⟳ {r.restaurant} · {ageLabel(r.scannedAt)}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
         </View>
       </SafeAreaView>
     );
@@ -418,25 +343,9 @@ export default function CameraScreen() {
       <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
       <SafeAreaView style={styles.overlay}>
         <View style={styles.overlayTop}>
-          <CornerMenu dark />
+          <BackButton dark />
         </View>
         <View style={styles.spacer} />
-        {recents.length > 0 && (
-          <View style={styles.recentRow}>
-            {recents.map((r) => (
-              <Pressable
-                key={r.restaurantKey}
-                onPress={() => openRecent(r)}
-                accessibilityRole="button"
-                accessibilityLabel={`Reopen the saved ${r.restaurant} menu`}
-                style={styles.recentChip}>
-                <Text style={styles.recentText} numberOfLines={1}>
-                  ⟳ {r.restaurant} · {ageLabel(r.scannedAt)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
         <Body style={styles.hint}>Frame the whole menu, then tap to capture</Body>
         {error && <Body style={styles.error}>{error}</Body>}
         <View style={styles.shutterRow}>
@@ -464,7 +373,7 @@ const styles = StyleSheet.create({
     backgroundColor: Plait.color.paper,
     padding: Plait.space.lg,
   },
-  gateTop: { flexDirection: 'row', justifyContent: 'flex-end' },
+  gateTop: { flexDirection: 'row', justifyContent: 'flex-start' },
   gateBody: {
     flex: 1,
     justifyContent: 'center',
@@ -478,9 +387,9 @@ const styles = StyleSheet.create({
     gap: Plait.space.md,
   },
   overlayTop: {
-    alignSelf: 'flex-end',
+    alignSelf: 'flex-start',
     paddingTop: Plait.space.sm,
-    paddingRight: Plait.space.lg,
+    paddingLeft: Plait.space.lg,
   },
   spacer: { flex: 1 },
   hint: {
@@ -515,32 +424,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   uploadText: { color: '#fff', fontSize: 15, fontWeight: '600', fontFamily: Plait.font.body },
-  // Recent places — cached menus, zero vision tokens to reopen.
-  recentRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: Plait.space.lg,
-  },
-  recentChip: {
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: Plait.radius.pill,
-    maxWidth: '100%',
-  },
-  recentText: { color: '#fff', fontSize: 13, fontWeight: '600', fontFamily: Plait.font.body },
-  recentChipLight: {
-    backgroundColor: Plait.color.card,
-    borderWidth: 1,
-    borderColor: Plait.color.line,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: Plait.radius.pill,
-    maxWidth: '100%',
-  },
-  recentTextLight: { color: Plait.color.ink, fontSize: 13, fontWeight: '600', fontFamily: Plait.font.body },
   preview: {
     flex: 1,
     borderRadius: Plait.radius.lg,
@@ -554,7 +437,7 @@ const styles = StyleSheet.create({
   },
 });
 
-const menu = StyleSheet.create({
+const back = StyleSheet.create({
   button: {
     width: 40,
     height: 40,
@@ -566,40 +449,6 @@ const menu = StyleSheet.create({
     justifyContent: 'center',
   },
   buttonDark: { backgroundColor: 'rgba(0,0,0,0.5)', borderColor: 'transparent' },
-  buttonIcon: { color: Plait.color.ink, fontSize: 16 },
-  buttonIconDark: { color: '#FFFFFF' },
-
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(27,30,27,0.35)',
-    paddingTop: 64,
-    paddingHorizontal: Plait.space.md,
-  },
-  sheet: {
-    backgroundColor: Plait.color.paper,
-    borderRadius: Plait.radius.lg,
-    padding: Plait.space.md,
-    gap: 4,
-    shadowColor: Plait.color.ink,
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 8,
-  },
-  head: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Plait.color.line,
-    marginBottom: 6,
-  },
-  logo: { fontFamily: Plait.font.display, fontSize: 24, color: Plait.color.ink },
-  version: { fontFamily: Plait.font.mono, fontSize: 11, color: Plait.color.inkFaint },
-  row: { flexDirection: 'row', alignItems: 'center', gap: Plait.space.sm, paddingVertical: 11 },
-  rowIcon: { fontSize: 17, width: 26, textAlign: 'center' },
-  rowLabel: { fontFamily: Plait.font.bodySemiBold, fontSize: 15, color: Plait.color.ink },
-  rowSub: { fontFamily: Plait.font.body, fontSize: 12, color: Plait.color.inkSoft, marginTop: 1 },
-  rowChevron: { fontFamily: Plait.font.body, fontSize: 18, color: Plait.color.inkFaint },
+  icon: { color: Plait.color.ink, fontSize: 24, lineHeight: 26, marginTop: -2 },
+  iconDark: { color: '#FFFFFF' },
 });

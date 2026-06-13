@@ -32,6 +32,15 @@ export function menuKey(restaurantName: string): string {
   return restaurantName.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+/** "today" / "3d ago" / "2w ago" — quiet age tag for a recent-place chip. */
+export function ageLabel(iso: string): string {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
 /** Upsert the raw vision read for this restaurant. Fire-and-forget. */
 export function saveMenuCache(input: { items: MenuItem[]; menuContext: VisionMenuContext }): void {
   const key = menuKey(input.menuContext.restaurant_name);

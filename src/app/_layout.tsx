@@ -53,6 +53,7 @@ export default function RootLayout() {
             }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="preferences" />
+            <Stack.Screen name="dashboard" />
             <Stack.Screen name="camera" />
             <Stack.Screen name="picks" />
             <Stack.Screen name="stats" />
