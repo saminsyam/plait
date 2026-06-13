@@ -197,6 +197,26 @@ function getStorage(): KVStorage {
 }
 
 /**
+ * Seed the local cache from an external source — the server-side shared cache
+ * in src/lib (this module stays backend-free and never imports it). `at` lets
+ * the caller carry the ORIGINAL fetch time across tiers, so the 14-day TTL
+ * never stretches by re-caching.
+ */
+export async function cacheReviewsLocally(
+  restaurant: string,
+  result: ReviewsResult,
+  at: number = Date.now()
+): Promise<void> {
+  if (!result.found || normalizeRestaurantName(restaurant) === '') return;
+  try {
+    const record: CacheRecord = { at, result };
+    await getStorage().setItem(cacheKeyFor(restaurant), JSON.stringify(record));
+  } catch {
+    // Cache write failure is never worth surfacing — next fetch just pays.
+  }
+}
+
+/**
  * Cached reviews for a restaurant, or null when absent/expired. Free and
  * instant — the scan flow uses this to light up crowd favorites at no cost.
  */
@@ -344,14 +364,7 @@ export async function callReviews(
   });
 
   // Cache only found results — a dry search shouldn't be pinned for 14 days.
-  if (result.found) {
-    try {
-      const record: CacheRecord = { at: Date.now(), result };
-      await getStorage().setItem(cacheKeyFor(restaurant), JSON.stringify(record));
-    } catch {
-      // Cache write failure is never worth surfacing — next fetch just pays.
-    }
-  }
+  await cacheReviewsLocally(restaurant, result);
 
   onProgress?.({
     id: 'reviews',

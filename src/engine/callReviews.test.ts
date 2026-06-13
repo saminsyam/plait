@@ -12,6 +12,8 @@ import { test } from 'node:test';
 
 import {
   cacheKeyFor,
+  cacheReviewsLocally,
+  getCachedReviews,
   normalizeRestaurantName,
   normalizeReviews,
   parseCachedReviews,
@@ -107,4 +109,23 @@ test('normalizeReviews returns a dry result for found:false or no favorites', ()
   assert.equal(normalizeReviews({ found: true, crowd_favorites: [] }).found, false);
   assert.equal(normalizeReviews(undefined).found, false);
   assert.equal(normalizeReviews('garbage').found, false);
+});
+
+// In plain Node, callReviews' storage falls back to a per-process memory map
+// (see getStorage), so the seed → read round-trip is testable without mocks.
+test('cacheReviewsLocally seeds the local tier (server-cache handoff)', async () => {
+  await cacheReviewsLocally('Shared Cafe', FOUND);
+  assert.deepEqual(await getCachedReviews('Shared Cafe'), FOUND);
+});
+
+test('cacheReviewsLocally carries the original fetch time — TTL never stretches', async () => {
+  // A server row fetched 15 days ago must not be reborn as a fresh local entry.
+  await cacheReviewsLocally('Old Cafe', FOUND, Date.now() - REVIEWS_TTL_MS - 1000);
+  assert.equal(await getCachedReviews('Old Cafe'), null);
+});
+
+test('cacheReviewsLocally refuses dry results and unnamed restaurants', async () => {
+  await cacheReviewsLocally('Dry Cafe', { ...FOUND, found: false, crowd_favorites: [] });
+  assert.equal(await getCachedReviews('Dry Cafe'), null);
+  await cacheReviewsLocally('   ', FOUND); // no key to store under — no throw
 });

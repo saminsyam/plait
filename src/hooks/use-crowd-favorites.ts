@@ -19,12 +19,18 @@
  */
 import { useEffect, useRef, useState } from 'react';
 
-import { callReviews, getCachedReviews, type ReviewsResult } from '@/engine/callReviews';
+import {
+  cacheReviewsLocally,
+  callReviews,
+  getCachedReviews,
+  type ReviewsResult,
+} from '@/engine/callReviews';
 import {
   gateCrowdFavorites,
   matchCrowdFavorites,
   type GatedFavorite,
 } from '@/engine/matchReviews';
+import { fetchSharedReviews, saveSharedReviews } from '@/lib/reviewCache';
 import { useSession } from '@/state/session';
 
 export function useCrowdFavorites(): {
@@ -71,13 +77,25 @@ export function useCrowdFavorites(): {
       // (instant), with cached reviews folded in when present.
       setCrowdReady(true);
       if (cached) return;
-      // Nothing cached → one background search; its results fold in a beat
+      // Nothing cached locally → background tiers; results fold in a beat
       // later as ★ badges + blurbs on the already-shown cards (no re-rank). A
-      // dry or failed search just means no badges — never an error UI.
+      // dry or failed lookup just means no badges — never an error UI.
       if (fetchedFor.current === restaurantName) return;
       fetchedFor.current = restaurantName;
+      // Tier 2: the SHARED server cache — free, zero tokens, survives
+      // reinstall. A hit also seeds the local tier, carrying the original
+      // fetch time so the 14-day TTL never stretches across tiers.
+      const shared = await fetchSharedReviews(restaurantName);
+      if (shared) {
+        applyReviews(shared.result);
+        void cacheReviewsLocally(restaurantName, shared.result, shared.fetchedAt);
+        return;
+      }
+      // Tier 3: ONE live web search; publish a found result for everyone.
       try {
-        applyReviews(await callReviews(restaurantName, ''));
+        const fetched = await callReviews(restaurantName, '');
+        applyReviews(fetched);
+        if (fetched.found) saveSharedReviews(restaurantName, fetched);
       } catch {
         // Offline / search failed — the picks stand on their own.
       }

@@ -69,3 +69,36 @@ create policy "own rows: update"
 create policy "own rows: select"
   on public.menu_cache for select to authenticated
   using (auth.uid() = user_id);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Phase 3 · shared review cache (run JUST this section on existing projects).
+--
+-- Crowd-favorite search results are public web data, so this cache is SHARED:
+-- any signed-in user reads and refreshes the same per-restaurant row. One
+-- web search per restaurant TOTAL (not per device, not per reinstall). The
+-- 14-day TTL is enforced client-side against fetched_at.
+
+create table public.review_cache (
+  id             uuid primary key default gen_random_uuid(),
+  -- Normalized restaurant name (see normalizeRestaurantName) — globally unique.
+  restaurant_key text not null unique,
+  restaurant     text not null,
+  -- ReviewsResult as returned by the review search (found:true only).
+  payload        jsonb not null,
+  fetched_by     uuid not null default auth.uid() references auth.users (id),
+  fetched_at     timestamptz not null default now()
+);
+
+alter table public.review_cache enable row level security;
+
+create policy "shared: select"
+  on public.review_cache for select to authenticated
+  using (true);
+
+create policy "shared: insert"
+  on public.review_cache for insert to authenticated
+  with check (true);
+
+create policy "shared: update"
+  on public.review_cache for update to authenticated
+  using (true) with check (true);
