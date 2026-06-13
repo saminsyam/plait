@@ -39,7 +39,7 @@ import { RefineSheet } from '@/components/refine-sheet';
 import { Body, Eyebrow, PrimaryButton } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { bridgePick } from '@/engine/bridgePick';
-import { callDishDetail, type DishDetail } from '@/engine/callDishDetail';
+import { callDishDetail, dishDetailKey, type DishDetail } from '@/engine/callDishDetail';
 import { callKeto } from '@/engine/callKeto';
 import { rankFromPool } from '@/engine/rankFromPool';
 import type { FilteredItem } from '@/engine/dietaryFilter';
@@ -48,6 +48,7 @@ import { refineNudge } from '@/engine/refineNudge';
 import { applyTune, TUNES, type DealEntry, type TuneId } from '@/engine/tunes';
 import type { Answers, MenuItem, Pick, Question } from '@/engine/types';
 import { useCrowdFavorites } from '@/hooks/use-crowd-favorites';
+import { loadDishDetail, saveDishDetail } from '@/lib/dishDetailCache';
 import { logRankTrace } from '@/lib/scanCorpus';
 import { useProgressSteps, type ProgressStep } from '@/hooks/use-progress-steps';
 import { useProfile } from '@/state/profile';
@@ -428,7 +429,17 @@ export default function PicksScreen() {
     }
     const id = entry.item.id;
     activeIdRef.current = id;
-    const cached = detailCache.current[id];
+    // Key folds in the profile + answers, so the same dish gets distinct detail
+    // under Popular vs a Custom refine — and the same key persists across
+    // sessions in the server cache.
+    const key = dishDetailKey({
+      restaurant: menuContext?.restaurant_name ?? '',
+      itemId: id,
+      preferences: preferences ?? '',
+      answers: activeAnswers,
+    });
+    // Tier 1: in-memory (this session) — instant.
+    const cached = detailCache.current[key];
     if (cached) {
       setDetail(cached);
       setDetailLoading(false);
@@ -438,6 +449,17 @@ export default function PicksScreen() {
     setDetailLoading(true);
     (async () => {
       try {
+        // Tier 2: the persistent per-user cache — free, survives reinstall.
+        const stored = await loadDishDetail(key);
+        if (stored) {
+          detailCache.current[key] = stored;
+          if (activeIdRef.current === id) {
+            setDetail(stored);
+            setDetailLoading(false);
+          }
+          return;
+        }
+        // Tier 3: the live Haiku call — then seed both caches.
         const d = await callDishDetail({
           pick: entry.pick,
           item: entry.item,
@@ -445,7 +467,8 @@ export default function PicksScreen() {
           questions: activeQuestions,
           answers: activeAnswers,
         });
-        detailCache.current[id] = d;
+        detailCache.current[key] = d;
+        saveDishDetail(key, d);
         if (activeIdRef.current === id) setDetail(d);
       } catch {
         if (activeIdRef.current === id) setDetailError(true);

@@ -102,3 +102,34 @@ create policy "shared: insert"
 create policy "shared: update"
   on public.review_cache for update to authenticated
   using (true) with check (true);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- Phase 3 · dish-detail cache (run JUST this section on existing projects).
+--
+-- The lazy "tell me more" sheet call, cached PER USER — details are
+-- personalized (they reference the user's constraints and answers), so no
+-- sharing. Key = restaurant | dish | hash(preferences + answers). 30-day TTL
+-- enforced client-side against created_at.
+
+create table public.dish_detail_cache (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null default auth.uid() references auth.users (id),
+  cache_key  text not null,
+  payload    jsonb not null,
+  created_at timestamptz not null default now(),
+  unique (user_id, cache_key)
+);
+
+alter table public.dish_detail_cache enable row level security;
+
+create policy "own rows: insert"
+  on public.dish_detail_cache for insert to authenticated
+  with check (auth.uid() = user_id);
+
+create policy "own rows: update"
+  on public.dish_detail_cache for update to authenticated
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "own rows: select"
+  on public.dish_detail_cache for select to authenticated
+  using (auth.uid() = user_id);
