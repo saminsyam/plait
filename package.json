@@ -54,7 +54,8 @@
     "lint": "expo lint",
     "test": "npx tsx --test src/engine/*.test.ts",
     "test:watch": "npx tsx --test --watch src/engine/*.test.ts",
-    "eval": "npx tsx scripts/eval.ts"
+    "eval": "npx tsx scripts/eval.ts",
+    "eval:corpus": "npx tsx scripts/evalCorpus.ts"
   },
   "private": true
 }

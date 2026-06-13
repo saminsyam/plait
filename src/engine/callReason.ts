@@ -18,7 +18,7 @@ For each pick return JSON matching this shape exactly:
   "rank": number,               // 1..8, best first
   "item_id": string,
   "match_score": number,        // 0–100
-  "why": string,                // one sentence, conversational, specific to THIS dish
+  "why": string,                // one or two tight sentences combining WHAT the dish is (key ingredients, preparation) with WHY it fits this user — one blurb, never a separate summary + reason
   "flag": null | "verify_halal" | "contains_allergen" | "spicier_than_stated",
   "suits": string[],            // zero or more of: "price" | "light" | "safe" | "surprise"
   "protein_g": number | null,   // estimated grams per serving, null if unknown
@@ -95,8 +95,9 @@ type ReasonInput = {
  * Slim a gate survivor down to the fields the ranking prompt actually uses.
  * `category` and `cuisine_type` only serve the on-device narrowing engine,
  * which has already run; empty/zero fields carry no signal worth the tokens.
+ * (Exported for the keto agent, which sends the same slimmed shape.)
  */
-function slimItem(item: MenuItem): Record<string, unknown> {
+export function slimItem(item: MenuItem): Record<string, unknown> {
   const out: Record<string, unknown> = { id: item.id, name: item.name };
   if (item.price > 0) out.price = item.price;
   if (item.description) out.description = item.description;

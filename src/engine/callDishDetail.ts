@@ -22,7 +22,7 @@ dietary profile, and their answers, return ONLY a JSON object (no markdown, no
 preamble) with this exact shape:
 
 {
-  "why_this_pick": "2-3 sentences on why this dish fits THIS user's profile and answers. Specific, not generic.",
+  "why_this_pick": "2-3 sentences that go DEEPER than the short card blurb the user already read (the dish's 'why' is provided as dish.card_blurb): preparation, portion, how it eats, and how it fits THIS user's profile and answers. Add new information — never restate the blurb.",
   "safety_detail": ["expand each safety flag into one clear sentence, or empty array if none"],
   "explain_terms": { "term": "one friendly sentence explaining it in plain language" }
 }
@@ -89,6 +89,9 @@ export async function callDishDetail({
       fat_g: pick.fat_g,
       flag: pick.flag,
       rank: pick.rank,
+      // The combined summary+why already on the card — so the model adds to
+      // it instead of restating it.
+      card_blurb: pick.why,
     },
     user_profile: preferences || '(none given)',
     user_answers: describeAnswers(questions, answers),

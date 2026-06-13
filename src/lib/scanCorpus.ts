@@ -8,7 +8,7 @@
  * `scan_id`:
  *   • 'scan' — the vision read + the gate's three-way split (one per scan)
  *   • 'rank' — one per ranking call: the pool, the Q/A, the crowd context,
- *              and the returned slate with suits tags (popular AND custom)
+ *              and the returned slate with suits tags (popular, custom AND keto)
  *
  * Every write is fire-and-forget: failures are swallowed, nothing on the
  * critical path waits, and with Supabase unconfigured this whole module is a
@@ -69,9 +69,9 @@ export function beginScanTrace(input: {
   }).catch(() => {});
 }
 
-/** Log one ranking call's full input/output (popular or custom). */
+/** Log one ranking call's full input/output (popular, custom, or keto). */
 export function logRankTrace(input: {
-  mode: 'popular' | 'custom';
+  mode: 'popular' | 'custom' | 'keto';
   restaurant: string;
   cuisine: string;
   pool: MenuItem[];

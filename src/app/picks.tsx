@@ -5,11 +5,14 @@
  * tune chips as a persistent bottom row.
  *
  * Zero-token interactions feel instant (spec §2.5): tune chips re-deal the
- * ranked picks deterministically on-device, and "Adventurous?" flips one
- * contender into a deterministic stretch pick (dashed plum, allowed-only).
- * The model appears exactly twice: the instant rank off the scan, and ONE
- * re-rank when the refine sheet finishes narrowing. Blocked dishes live
- * behind the gate line's "view" — never silently dropped.
+ * ranked picks deterministically on-device — "Surprise me" doubling as the
+ * adventurous lens (it flips one contender into a deterministic stretch pick,
+ * dashed plum, allowed-only). The "Keto?" toggle is the exception: it runs the
+ * keto AGENT once per scan — a specialist rank with per-dish swaps ("bun →
+ * lettuce wrap"); swaps exist only in keto mode — then caches the slate. The
+ * model appears twice on the golden path (instant rank + ONE refine re-rank);
+ * dish detail and the keto agent are lazy, on-demand calls. Blocked dishes
+ * live behind the gate line's "view" — never silently dropped.
  */
 import { Redirect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -37,6 +40,7 @@ import { Body, Eyebrow, PrimaryButton } from '@/components/ui-kit';
 import { Plait } from '@/constants/plait-theme';
 import { bridgePick } from '@/engine/bridgePick';
 import { callDishDetail, type DishDetail } from '@/engine/callDishDetail';
+import { callKeto } from '@/engine/callKeto';
 import { rankFromPool } from '@/engine/rankFromPool';
 import type { FilteredItem } from '@/engine/dietaryFilter';
 import { choicesToQA, filterBySpice, nextQuestion, type EngineChoice } from '@/engine/questionEngine';
@@ -77,6 +81,26 @@ function gateSummary(blocked: FilteredItem[]): string {
     }
   }
   return terms.slice(0, 2).join(', ') + (terms.length > 2 ? '…' : '');
+}
+
+/**
+ * Deterministic FALLBACK when the keto agent call fails: low-carb first,
+ * higher protein as the tie-break, over the main slate (no swaps). Macros are
+ * model estimates that can be null; dishes we can't weigh sort last rather
+ * than masquerading as keto-friendly. Never mutates the input.
+ */
+function ketoOrder(deal: DealEntry[]): DealEntry[] {
+  const proteinDesc = (a: DealEntry, b: DealEntry) =>
+    (b.pick.protein_g ?? 0) - (a.pick.protein_g ?? 0);
+  return [...deal].sort((a, b) => {
+    const ca = a.pick.carbs_g;
+    const cb = b.pick.carbs_g;
+    if (ca == null && cb == null) return proteinDesc(a, b);
+    if (ca == null) return 1;
+    if (cb == null) return -1;
+    if (ca !== cb) return ca - cb;
+    return proteinDesc(a, b);
+  });
 }
 
 /** Card deal-in: fade + rise with an 80ms stagger (spec motion, ~0.45s). */
@@ -222,7 +246,50 @@ export default function PicksScreen() {
 
   // ── One-page interactions: tune chip, mode toggle, lock, gate view, refine.
   const [tune, setTune] = useState<TuneId | null>(null);
-  const [adventurous, setAdventurous] = useState(false);
+  const [keto, setKeto] = useState(false);
+
+  // ── Keto agent: a separate on-demand specialist rank with per-dish swaps.
+  // Runs ONCE per scan (first toggle), then the slate is cached; toggling
+  // after that is instant. Its own progress steps so it never fights the
+  // main rank's status box.
+  const [ketoPicks, setKetoPicks] = useState<Pick[] | null>(null);
+  const [ketoState, setKetoState] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
+  const {
+    steps: ketoSteps,
+    onProgress: onKetoProgress,
+    resetProgress: resetKetoProgress,
+  } = useProgressSteps();
+
+  const runKeto = useCallback(async () => {
+    setKetoState('running');
+    resetKetoProgress();
+    try {
+      const pool = filterBySpice(candidates, spiceCeiling);
+      const picks = await callKeto({
+        items: pool,
+        userPreferences: preferences ?? '',
+        verifyById,
+        restaurantNotes,
+        onProgress: onKetoProgress,
+      });
+      setKetoPicks(picks);
+      setKetoState('done');
+      logRankTrace({
+        mode: 'keto',
+        restaurant: menuContext?.restaurant_name ?? '',
+        cuisine: menuContext?.cuisine_type ?? '',
+        pool,
+        questions: [],
+        answers: {},
+        crowdMap: {},
+        picks,
+      });
+    } catch {
+      // The toggle still works — the deal falls back to the deterministic
+      // low-carb ordering of the main slate (no swaps), with an honest note.
+      setKetoState('error');
+    }
+  }, [candidates, spiceCeiling, preferences, verifyById, restaurantNotes, menuContext, onKetoProgress, resetKetoProgress]);
   const [locked, setLocked] = useState(false);
   const [gateOpen, setGateOpen] = useState(false);
   const [refineOpen, setRefineOpen] = useState(false);
@@ -311,9 +378,14 @@ export default function PicksScreen() {
   const halalCertified = restaurantNotes.some((n) => /halal/i.test(n));
   const trustNotes = restaurantNotes.filter((n) => /halal|kosher/i.test(n));
 
-  const maxProtein = Math.max(1, ...activePicks.map((p) => p.protein_g ?? 0));
-  const maxCarbs = Math.max(1, ...activePicks.map((p) => p.carbs_g ?? 0));
-  const maxFat = Math.max(1, ...activePicks.map((p) => p.fat_g ?? 0));
+  // Keto mode deals the keto agent's own slate (its macros reflect the swap);
+  // everything else deals from the active Popular/Custom set.
+  const dealSource: Pick[] = keto && ketoPicks ? ketoPicks : activePicks;
+  const ketoLoading = keto && ketoState === 'running';
+
+  const maxProtein = Math.max(1, ...dealSource.map((p) => p.protein_g ?? 0));
+  const maxCarbs = Math.max(1, ...dealSource.map((p) => p.carbs_g ?? 0));
+  const maxFat = Math.max(1, ...dealSource.map((p) => p.fat_g ?? 0));
 
   const pickNeedsVerify = (p: Pick): boolean => {
     const flag = p.flag === 'verify_halal' && halalCertified ? null : p.flag;
@@ -409,32 +481,44 @@ export default function PicksScreen() {
       ? refineNudge({ poolSize: trimmedPool.length, preferencesText: preferences ?? '', picks: popularPicks })
       : null;
 
-  // ── Assemble the displayed deal from the ACTIVE view: the active tune chip
-  // re-orders the ranked picks deterministically; adventurous mode flips the
-  // first contender into the deterministic stretch pick.
-  const rankedDeal: DealEntry[] = activePicks
+  // ── Assemble the displayed deal from the ACTIVE view: the keto toggle or the
+  // active tune chip re-orders the ranked picks deterministically; the
+  // "Surprise me" chip also flips the first contender into the stretch pick.
+  const rankedDeal: DealEntry[] = dealSource
     .map((p) => {
       const item = byId.get(p.item_id);
       return item ? { pick: p, item, needsVerify: pickNeedsVerify(p) } : null;
     })
     .filter((e): e is DealEntry => e !== null);
-  const orderedDeal = applyTune(tune, rankedDeal);
+  // Two mutually exclusive lenses: keto (the agent's slate in its own order,
+  // or the deterministic low-carb fallback when the call failed) or the
+  // active tune chip. Toggling one clears the other.
+  const orderedDeal = keto
+    ? ketoPicks
+      ? [...rankedDeal]
+      : ketoOrder(rankedDeal)
+    : applyTune(tune, rankedDeal);
   const orderedEntries: DisplayEntry[] = orderedDeal.map((e) => ({ kind: 'pick', ...e }));
 
-  const stretch = adventurous
-    ? bridgePick({ picks: activePicks, candidates, verifyById, signatureIds: o.signature_item_ids, byId })
-    : null;
+  // The "Surprise me" chip IS the adventurous lens: on top of its deep-cut
+  // ordering it flips the first contender into a stretch pick — a signature /
+  // allowed dish the ranker didn't already place (dashed plum).
+  const stretch =
+    tune === 'surprise'
+      ? bridgePick({ picks: activePicks, candidates, verifyById, signatureIds: o.signature_item_ids, byId })
+      : null;
   const hero = orderedEntries[0] ?? null;
   const contenders: DisplayEntry[] = stretch
     ? [{ kind: 'stretch', item: stretch.item, why: stretch.why }, ...orderedEntries.slice(1, 2)]
     : orderedEntries.slice(1, 3);
 
   // Re-deal the stagger animation whenever the visible set changes.
-  const dealKey = `${view}·${orderedDeal.map((e) => e.item.id).join('·')}·${adventurous}`;
+  const dealKey = `${view}·${orderedDeal.map((e) => e.item.id).join('·')}·${keto}·${!!stretch}`;
 
   const toggleTune = (id: TuneId) => {
     if (rankState === 'running') return;
     setLocked(false);
+    setKeto(false); // keto and tune chips are mutually exclusive lenses
     setTune((t) => (t === id ? null : id));
   };
 
@@ -446,13 +530,19 @@ export default function PicksScreen() {
     closeSheet();
     setTune(null);
     setLocked(false);
-    setAdventurous(false);
+    setKeto(false);
     setView(next);
   };
 
-  const toggleAdventurous = () => {
+  const toggleKeto = () => {
+    if (rankState === 'running') return;
     setLocked(false);
-    setAdventurous((a) => !a);
+    setTune(null); // keto and tune chips are mutually exclusive lenses
+    const next = !keto;
+    setKeto(next);
+    // First flip on this scan → run the keto agent; afterwards the cached
+    // slate makes the toggle instant. (Re-entering during a run is guarded.)
+    if (next && ketoPicks === null && ketoState !== 'running') void runKeto();
   };
 
   const toggleGate = () => {
@@ -474,11 +564,11 @@ export default function PicksScreen() {
             </Text>
           </View>
           <Pressable
-            onPress={toggleAdventurous}
-            style={[styles.modeToggle, adventurous && styles.modeToggleOn]}
+            onPress={toggleKeto}
+            style={[styles.modeToggle, keto && styles.modeToggleOn]}
             hitSlop={6}>
-            <Text style={[styles.modeToggleText, adventurous && styles.modeToggleTextOn]}>
-              {adventurous ? '✦ Adventurous' : 'Adventurous?'}
+            <Text style={[styles.modeToggleText, keto && styles.modeToggleTextOn]}>
+              {keto ? '✦ Keto' : 'Keto?'}
             </Text>
           </Pressable>
         </View>
@@ -548,6 +638,13 @@ export default function PicksScreen() {
 
         {/* Live ranking status — real pipeline events, never a fake timer. */}
         {rankState === 'running' && <RankStatus steps={steps} />}
+        {ketoLoading && <RankStatus steps={ketoSteps} />}
+        {keto && ketoState === 'error' && (
+          <Body style={styles.emptyPicks}>
+            The keto agent couldn’t read this menu — showing your picks
+            lowest-carb first instead (no swaps).
+          </Body>
+        )}
         {rankState === 'error' && (
           <View style={styles.rankBox}>
             <Body style={styles.emptyPicks}>
@@ -561,7 +658,7 @@ export default function PicksScreen() {
         )}
 
         {/* ── The deal: hero + two contenders */}
-        {hero && rankState !== 'running' && (
+        {hero && rankState !== 'running' && !ketoLoading && (
           <View key={dealKey} style={styles.deal}>
             <DealIn index={0} reduceMotion={reduceMotion}>
               <HeroCard
@@ -686,7 +783,7 @@ export default function PicksScreen() {
                   </View>
                 )}
 
-                <Eyebrow style={{ marginBottom: 6 }}>why this pick</Eyebrow>
+                <Eyebrow style={{ marginBottom: 6 }}>about this dish</Eyebrow>
                 {sheet.kind === 'stretch' ? (
                   <>
                     <Text style={styles.sheetWhy}>{sheet.why}</Text>
@@ -714,6 +811,15 @@ export default function PicksScreen() {
                       </View>
                     )}
                   </>
+                )}
+
+                {sheet.kind === 'pick' && sheet.pick.swap && (
+                  <View style={styles.swapBlock}>
+                    <Eyebrow style={{ color: Plait.color.plum, marginBottom: 4 }}>
+                      order it keto
+                    </Eyebrow>
+                    <Text style={styles.swapBlockText}>⇄ {sheet.pick.swap}</Text>
+                  </View>
                 )}
 
                 {crowdBlurbFor(sheet.item) && (
@@ -777,6 +883,9 @@ function HeroCard({
         <MatchRing value={entry.kind === 'pick' ? entry.pick.match_score : null} color={accent} />
       </View>
       <Text style={styles.heroWhy}>{entry.kind === 'pick' ? entry.pick.why : entry.why}</Text>
+      {entry.kind === 'pick' && entry.pick.swap && (
+        <Text style={styles.swapLine}>⇄ {entry.pick.swap}</Text>
+      )}
       <View style={styles.heroMeta}>
         {entry.item.price > 0 && (
           <Text style={styles.heroPrice}>${entry.item.price.toFixed(2)}</Text>
@@ -784,7 +893,7 @@ function HeroCard({
         <CardBadge kind={badgeKind} />
         <View style={{ flex: 1 }} />
         <Pressable onPress={onOpen} hitSlop={8}>
-          <Text style={styles.whyLink}>why? →</Text>
+          <Text style={styles.whyLink}>details →</Text>
         </Pressable>
       </View>
       <HoldToLock locked={locked} onLock={onLock} />
@@ -823,6 +932,11 @@ function ContenderCard({
         <Text style={styles.contenderWhy} numberOfLines={1}>
           {entry.kind === 'pick' ? entry.pick.why : entry.why}
         </Text>
+        {entry.kind === 'pick' && entry.pick.swap && (
+          <Text style={styles.contenderSwap} numberOfLines={1}>
+            ⇄ {entry.pick.swap}
+          </Text>
+        )}
       </View>
       <CardBadge kind={badgeKind} />
     </Pressable>
@@ -1013,6 +1127,27 @@ const styles = StyleSheet.create({
   detailLoader: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: Plait.space.sm },
   detailLoaderText: { color: Plait.color.inkSoft, fontSize: 13, fontFamily: Plait.font.body },
   errorText: { color: Plait.color.inkSoft, fontSize: 13, fontFamily: Plait.font.body, paddingVertical: 8 },
+  // Keto swap — only the keto agent emits swaps, so plum = "modified order".
+  swapLine: { fontFamily: Plait.font.bodySemiBold, fontSize: 12.5, color: Plait.color.plum },
+  contenderSwap: {
+    fontFamily: Plait.font.bodySemiBold,
+    fontSize: 11.5,
+    color: Plait.color.plum,
+    marginTop: 2,
+  },
+  swapBlock: {
+    marginTop: 16,
+    backgroundColor: Plait.color.plumSoft,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  swapBlockText: {
+    fontFamily: Plait.font.bodySemiBold,
+    fontSize: 13,
+    lineHeight: 19,
+    color: Plait.color.plum,
+  },
   crowdBlock: {
     marginTop: 16,
     backgroundColor: Plait.color.greenSoft,

@@ -47,14 +47,25 @@ export function RefineSheet({
   const [choices, setChoices] = useState<EngineChoice[]>([]);
   const [dynamicCount, setDynamicCount] = useState(0);
 
-  // Fresh narrowing state every time the sheet opens.
-  useEffect(() => {
-    if (!visible) return;
+  // Fresh narrowing state every time the sheet opens — reset DURING render on
+  // the closed→open transition, not in an effect. An effect runs a frame late,
+  // so the first render after reopening would still hold the PREVIOUS
+  // narrowing's exhausted pool (every facet already asked) → `question` is null
+  // → the safety net below fires onDone immediately and just re-ranks the old
+  // pool. That was the "Redo your custom order doesn't ask the questions again"
+  // bug. Resetting in render means the first frame already shows the full pool
+  // and an unanswered first question. (This also avoids re-resetting mid-flow
+  // when the parent hands a fresh `initialPool` array on an unrelated render.)
+  const [wasVisible, setWasVisible] = useState(false);
+  if (visible && !wasVisible) {
+    setWasVisible(true);
     setPool(initialPool);
     setAsked(new Set());
     setChoices([spiceChoice(spiceCeiling)]);
     setDynamicCount(0);
-  }, [visible, initialPool, spiceCeiling]);
+  } else if (!visible && wasVisible) {
+    setWasVisible(false);
+  }
 
   const question = nextQuestion(pool, asked);
 

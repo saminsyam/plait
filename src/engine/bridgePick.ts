@@ -1,5 +1,5 @@
 /**
- * Deterministic bridge pick for explore mode ("Adventurous?") — zero tokens.
+ * Deterministic bridge pick for the adventurous lens ("Surprise me") — zero tokens.
  * An `allowed`-only candidate outside the current picks (verify items never
  * stretch: stretch requires HIGHER confidence, never lower), preferring house
  * signatures and dishes sharing a flavor lane with the hero so the unfamiliar

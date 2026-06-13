@@ -94,4 +94,10 @@ export type Pick = {
   fat_g: number | null;
   // Confidence in the macro estimates
   confidence: 'high' | 'medium' | 'low' | null;
+  /**
+   * Keto agent only: one kitchen-realistic modification that makes the dish
+   * keto ("swap the bun for a lettuce wrap"), null when it's keto as ordered.
+   * Absent everywhere else — the swap feature belongs to keto mode alone.
+   */
+  swap?: string | null;
 };
