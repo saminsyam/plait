@@ -34,6 +34,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ExplainText } from '@/components/explain-text';
 import { HoldToLock } from '@/components/hold-to-lock';
+import { BudgetSlider } from '@/components/budget-slider';
 import { MatchRing } from '@/components/match-ring';
 import { RefineSheet } from '@/components/refine-sheet';
 import { Body, Eyebrow, PrimaryButton } from '@/components/ui-kit';
@@ -45,7 +46,7 @@ import { rankFromPool } from '@/engine/rankFromPool';
 import type { FilteredItem } from '@/engine/dietaryFilter';
 import { choicesToQA, filterBySpice, nextQuestion, type EngineChoice } from '@/engine/questionEngine';
 import { refineNudge } from '@/engine/refineNudge';
-import { applyTune, TUNES, type DealEntry, type TuneId } from '@/engine/tunes';
+import { applyBudget, applyTune, TUNES, type DealEntry, type TuneId } from '@/engine/tunes';
 import type { Answers, MenuItem, Pick, Question } from '@/engine/types';
 import { useCrowdFavorites } from '@/hooks/use-crowd-favorites';
 import { loadDishDetail, saveDishDetail } from '@/lib/dishDetailCache';
@@ -248,6 +249,9 @@ export default function PicksScreen() {
   // ── One-page interactions: tune chip, mode toggle, lock, gate view, refine.
   const [tune, setTune] = useState<TuneId | null>(null);
   const [keto, setKeto] = useState(false);
+  // Budget ceiling in whole dollars; null = off (any price). A deterministic,
+  // zero-token price filter on the ranked slate — never a re-rank.
+  const [budget, setBudget] = useState<number | null>(null);
 
   // ── Keto agent: a separate on-demand specialist rank with per-dish swaps.
   // Runs ONCE per scan (first toggle), then the slate is cached; toggling
@@ -513,14 +517,26 @@ export default function PicksScreen() {
       return item ? { pick: p, item, needsVerify: pickNeedsVerify(p) } : null;
     })
     .filter((e): e is DealEntry => e !== null);
+
+  // Budget ceiling — a deterministic price filter on the ranked slate (zero
+  // tokens, no re-rank). The slider only shows when the slate's priced dishes
+  // actually span a range worth filtering.
+  const pricedPrices = rankedDeal.map((e) => e.item.price).filter((p) => p > 0);
+  const minPrice = pricedPrices.length > 0 ? Math.floor(Math.min(...pricedPrices)) : 0;
+  const maxPrice = pricedPrices.length > 0 ? Math.ceil(Math.max(...pricedPrices)) : 0;
+  const budgetAvailable = new Set(pricedPrices).size >= 2 && rankState !== 'running' && !ketoLoading;
+  const budgetCeiling = budget !== null && budget < maxPrice ? budget : null;
+  const budgetedDeal = applyBudget(rankedDeal, budgetCeiling);
+  const fitCount = budgetedDeal.length;
+
   // Two mutually exclusive lenses: keto (the agent's slate in its own order,
   // or the deterministic low-carb fallback when the call failed) or the
-  // active tune chip. Toggling one clears the other.
+  // active tune chip. Toggling one clears the other. Budget filters first.
   const orderedDeal = keto
     ? ketoPicks
-      ? [...rankedDeal]
-      : ketoOrder(rankedDeal)
-    : applyTune(tune, rankedDeal);
+      ? [...budgetedDeal]
+      : ketoOrder(budgetedDeal)
+    : applyTune(tune, budgetedDeal);
   const orderedEntries: DisplayEntry[] = orderedDeal.map((e) => ({ kind: 'pick', ...e }));
 
   // The "Surprise me" chip IS the adventurous lens: on top of its deep-cut
@@ -536,7 +552,7 @@ export default function PicksScreen() {
     : orderedEntries.slice(1, 3);
 
   // Re-deal the stagger animation whenever the visible set changes.
-  const dealKey = `${view}·${orderedDeal.map((e) => e.item.id).join('·')}·${keto}·${!!stretch}`;
+  const dealKey = `${view}·${orderedDeal.map((e) => e.item.id).join('·')}·${keto}·${!!stretch}·${budgetCeiling}`;
 
   const toggleTune = (id: TuneId) => {
     if (rankState === 'running') return;
@@ -554,6 +570,7 @@ export default function PicksScreen() {
     setTune(null);
     setLocked(false);
     setKeto(false);
+    setBudget(null);
     setView(next);
   };
 
@@ -703,6 +720,24 @@ export default function PicksScreen() {
               </Text>
             )}
           </View>
+        )}
+
+        {/* Budget — a zero-token price ceiling that re-deals the slate. */}
+        {hero && budgetAvailable && (
+          <BudgetSlider
+            min={minPrice}
+            max={maxPrice}
+            value={budget ?? maxPrice}
+            onChange={(d) => {
+              setLocked(false);
+              setBudget(d >= maxPrice ? null : d);
+            }}
+            fitLabel={
+              budgetCeiling === null
+                ? `all ${rankedDeal.length} picks`
+                : `${fitCount} of ${rankedDeal.length} picks fit`
+            }
+          />
         )}
 
         {/* The narrowing flow as a quiet offer. Before a Custom result exists

@@ -77,3 +77,22 @@ export function applyTune(tune: TuneId | null, deal: DealEntry[]): DealEntry[] {
   const cmp = compareFor(tune);
   return [...suited.sort(cmp), ...rest.sort(cmp)];
 }
+
+/**
+ * Budget ceiling — a deterministic, ZERO-TOKEN price filter on the already
+ * ranked slate (no re-rank, no model call). Keeps picks at or under `ceiling`;
+ * unpriced dishes (price 0 = unknown) are always kept rather than hidden on a
+ * guess. `null` ceiling = off. Order is preserved so a tune/keto lens still
+ * controls ordering downstream. Never strands the user: if every priced pick
+ * is over budget, the single cheapest priced pick is kept as a floor so the
+ * deal always has a hero. Never mutates the input.
+ */
+export function applyBudget(deal: DealEntry[], ceiling: number | null): DealEntry[] {
+  if (ceiling === null) return [...deal];
+  const under = deal.filter((e) => e.item.price === 0 || e.item.price <= ceiling);
+  if (under.length > 0) return under;
+  const priced = deal.filter((e) => e.item.price > 0);
+  if (priced.length === 0) return [...deal];
+  const cheapest = priced.reduce((a, b) => (b.item.price < a.item.price ? b : a));
+  return [cheapest];
+}

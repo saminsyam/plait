@@ -142,14 +142,14 @@
   <div class="panel active" id="now">
     <section>
       <div class="eyebrow">the golden path</div>
-      <h2>Open → photograph → eat. Two taps.</h2>
-      <p class="lede">The camera <em>is</em> the home screen. One photo runs the whole pipeline under a single
-      live-status loader, and the picks screen lands fully formed — hero pick, two contenders, done.
-      Everything that isn't the golden path lives behind one corner ☰ menu.</p>
+      <h2>Open → photograph → eat.</h2>
+      <p class="lede">The app opens on a calm <b>dashboard</b> — one green "Scan a menu" button, your recent
+      places, your profile. One photo then runs the whole pipeline under a single live-status loader, and
+      the picks screen lands fully formed — hero pick, two contenders, done.</p>
       <div class="grid">
-        <div class="card feature"><h3>📷 Camera-as-home</h3><p>Frame the menu, tap the shutter (or upload from the library). No feeds, no dashboards — the app opens ready to work.</p></div>
+        <div class="card feature"><h3>🏠 Dashboard home</h3><p>A focused opening screen: the scan button, "recent places" (free re-opens of menus you've already scanned — zero vision tokens), and your dietary profile. The camera is one tap away.</p></div>
         <div class="card feature"><h3>🔥 One honest loader</h3><p>Real pipeline stages with live details and per-step timers — "23 dishes spotted", "writing pick #2…". Never a fake timeline; navigation fires the moment the work truly finishes.</p></div>
-        <div class="card feature"><h3>🏆 One-page picks</h3><p>"Our pick for you" hero card with hold-to-lock, two compact contenders, and a why-this-pick detail sheet with tap-to-explain for unfamiliar terms.</p></div>
+        <div class="card feature"><h3>🏆 One-page picks</h3><p>"Our pick for you" hero card with hold-to-lock, two compact contenders, and a detail sheet (a concise blurb of what the dish is <em>and</em> why it fits, with tap-to-explain for unfamiliar terms).</p></div>
         <div class="card feature"><h3>🛡️ The gate line</h3><p>"3 dishes hidden for you — pork, shrimp paste · view." Blocked dishes are never silently dropped; trust is made visible and auditable.</p></div>
       </div>
     </section>
@@ -164,7 +164,9 @@
         <div class="card feature"><h3>⭐ Crowd favorites <span class="chip free">the swap</span></h3><p>Cached reviews fold straight into the first ranking. Uncached? The picks render instantly anyway and one background search folds in ★ badges a beat later — no re-rank, no shuffle.</p></div>
         <div class="card feature"><h3>✎ Refine sheet</h3><p>On-device narrowing questions (zero tokens) shrink the pool; one re-rank builds your Custom order without ever touching the cached Popular result.</p></div>
         <div class="card feature"><h3>🎛️ Intelligent tune chips <span class="chip free">0 tokens/tap</span></h3><p>$ lower · Light meal · Safe bet · Surprise me. The ranker returns a slate of up to 8 picks tagged with which tunes each suits — a chip re-deals the whole hand from the slate, instantly.</p></div>
-        <div class="card feature"><h3>✦ Adventurous mode</h3><p>One toggle flips a contender into a deterministic "stretch pick" — a safe-but-bolder dish sharing a flavor lane with your matches, dashed in plum.</p></div>
+        <div class="card feature"><h3>💵 Budget slider <span class="chip free">0 tokens</span></h3><p>Drag a price ceiling and the slate re-deals on-device to what fits — no re-rank, no model call. Unpriced dishes are never hidden on a guess, and it never strands you below the cheapest pick.</p></div>
+        <div class="card feature"><h3>✦ Surprise me <span class="chip free">0 tokens</span></h3><p>The adventurous lens: deep-cut ordering plus a deterministic "stretch pick" — a bolder dish sharing a flavor lane with your matches, dashed in plum.</p></div>
+        <div class="card feature"><h3>🥑 Keto agent <span class="chip model">on-demand</span></h3><p>The "Keto?" toggle runs a specialist rank that suggests one realistic swap per dish ("bun → lettuce wrap") and quotes macros post-swap. Cached for the scan; swaps live only here.</p></div>
       </div>
     </section>
 
@@ -173,9 +175,11 @@
       <div class="card">
         <div class="grid">
           <div class="feature"><h3>🔒 Dietary profile</h3><p>Free-text preferences smart-parsed into machine-checkable hard constraints + a once-asked spice ceiling. Stored on device.</p></div>
+          <div class="feature"><h3>🗄️ Runtime caches <span class="chip free">Supabase</span></h3><p>Three caches cut tokens on repeat visits: the menu read (skip vision entirely), crowd reviews (shared across users — one search per restaurant), and dish details. All off the critical path; the app runs identically without them.</p></div>
           <div class="feature"><h3>📊 Hidden stats screen</h3><p>Tap the version label 5× — full API ledger: every call, tokens, and real dollar cost, grouped by purpose, with a reset counter.</p></div>
-          <div class="feature"><h3>🎨 v2 "paper" design system</h3><p>Fraunces · Public Sans · Spline Sans Mono on warm paper, with green/amber/plum semantics (good / verify / adventurous) locked app-wide.</p></div>
-          <div class="feature"><h3>✅ Verified</h3><p>75 unit tests across the engine (gate, tunes, bridge pick, nudges, review matching) — tsc and eslint clean.</p></div>
+          <div class="feature"><h3>🔬 Scan corpus + eval</h3><p>Every scan logs its real engine trace; <span class="mono">npm run eval:corpus</span> measures slate quality, suits coverage, gate agreement, and cache hit rate against actual menus.</p></div>
+          <div class="feature"><h3>🎨 v2 "paper" design system</h3><p>Fraunces · Public Sans · Spline Sans Mono on warm paper, with green/amber/plum semantics (good / verify / adventurous &amp; keto swaps) locked app-wide.</p></div>
+          <div class="feature"><h3>✅ Verified</h3><p>90 unit tests across the engine (gate, tunes, budget, bridge pick, narrowing, dish-detail keys, review cache) — tsc and eslint clean.</p></div>
         </div>
       </div>
     </section>
@@ -258,10 +262,11 @@
           <div class="rail"><div class="dot">⚡</div><div class="cord"></div></div>
           <div class="stage-body">
             <h3>Everything after is instant <span class="chip free">0 tokens</span></h3>
-            <div class="stage-meta">tunes · bridgePick · spice trim · view toggle</div>
+            <div class="stage-meta">tunes · budget · bridgePick · spice trim · view toggle</div>
             <p>Tune chips select a new top-3 from the slate (model tags first, deterministic keys as
-            tie-break and backfill). Adventurous mode computes a stretch pick from shared flavor lanes.
-            Popular ⇄ Custom switches between cached results. None of it costs a token or a spinner.</p>
+            tie-break and backfill). The budget slider filters the slate to a price ceiling; "Surprise me"
+            computes a stretch pick from shared flavor lanes. Popular ⇄ Custom switches between cached
+            results. None of it costs a token or a spinner.</p>
           </div>
         </div>
 
@@ -269,9 +274,10 @@
           <div class="rail"><div class="dot">🍽️</div><div class="cord"></div></div>
           <div class="stage-body">
             <h3>On demand only <span class="chip model">lazy model calls</span></h3>
-            <div class="stage-meta">dish.detail · refine → one custom re-rank</div>
-            <p>Tapping "why?" fetches a deeper dish explanation (with tap-to-explain terms) once, then caches it.
-            Finishing the refine sheet's on-device questions triggers the only other rank — the Custom order.</p>
+            <div class="stage-meta">dish.detail · keto.rank · refine → one custom re-rank</div>
+            <p>Tapping "details" fetches a deeper dish explanation (with tap-to-explain terms) once, then caches it.
+            Toggling "Keto?" runs a one-off specialist rank with per-dish swaps. Finishing the refine sheet's
+            on-device questions triggers the Custom re-rank. Each is paid for only when asked for, and cached after.</p>
           </div>
         </div>
 
@@ -283,8 +289,9 @@
       <div class="card feature">
         <h3>💰 Every call is metered</h3>
         <p>A client-side usage ledger records each API call's label, token counts, web searches, and real dollar
-        cost — surfaced in the hidden stats screen. A typical scan: one vision read, one rank, and at most one
-        review search; dish details and the custom re-rank only when asked for.</p>
+        cost — surfaced in the hidden stats screen. A typical fresh scan: one vision read, one rank, and at most
+        one review search; dish details, keto, and the custom re-rank only when asked for. A <b>return visit</b>
+        replays from the runtime caches — the vision read, and often the review search, cost nothing at all.</p>
       </div>
     </section>
   </div>
@@ -302,13 +309,13 @@
           <div class="horizon now">Near · finish the loop</div>
           <div class="road-item"><b>Taste memory</b><p>Hold-to-lock already says "saved to your taste profile" — make it true: persist locked picks and post-meal feedback, and feed them into the next scan's ranking context.</p></div>
           <div class="road-item"><b>Outcome check-in</b><p>A quiet "how was it?" the next time the app opens — one tap, closing the recommend → eat → learn loop.</p></div>
-          <div class="road-item"><b>Supabase persistence</b><p>Move the profile and taste history off-device so they survive reinstalls and sync across devices (explicitly deferred out of 2.1).</p></div>
-          <div class="road-item"><b>TestFlight round</b><p>Real menus, real lighting, real restaurants — validate the one-loader flow and tune-chip slate breadth on device.</p></div>
+          <div class="road-item"><b>Profile sync</b><p>The corpus &amp; runtime caches already live in Supabase; move the profile and taste history there too, so they survive reinstalls and sync across devices.</p></div>
+          <div class="road-item"><b>TestFlight round</b><p>Real menus, real lighting, real restaurants — validate the dashboard flow, slate breadth, and cache hit-rate on device.</p></div>
         </div>
 
         <div class="card roadcol">
           <div class="horizon next">Next · sharpen the engine</div>
-          <div class="road-item"><b>Budget &amp; protein tunes</b><p>Revive the pre-redesign budget slider and protein-per-$ logic as first-class tune chips on the slate system.</p></div>
+          <div class="road-item"><b>Keto refinement</b><p>The keto agent ships with swaps; next, deepen its eval (swap realism, macro accuracy) and let it learn from the corpus.</p></div>
           <div class="road-item"><b>Large-menu sectioning</b><p>Menus that overflow one read today ask for a re-shot; instead, read by section and merge — no user-visible failure.</p></div>
           <div class="road-item"><b>Online menu lookup</b><p>Re-integrate the no-photo path: name a restaurant, pull its menu from the web, and run the same gate + rank pipeline on it.</p></div>
           <div class="road-item"><b>Prompt caching</b><p>When the lookup loop returns, cache its repeated context (~5–30% savings on that flow — the one place caching pays).</p></div>

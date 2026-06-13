@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { applyTune, type DealEntry } from './tunes';
+import { applyBudget, applyTune, type DealEntry } from './tunes';
 import type { MenuItem, Pick, TuneSuit } from './types';
 
 function entry({
@@ -142,4 +142,27 @@ test('suited selection never mutates the input slate', () => {
   const before = ids(SLATE);
   applyTune('light', SLATE);
   assert.deepEqual(ids(SLATE), before);
+});
+
+// ── applyBudget — deterministic price ceiling, zero tokens ──────────────────
+
+test('applyBudget with null ceiling is a no-op copy (never mutates input)', () => {
+  const out = applyBudget(BASE, null);
+  assert.deepEqual(ids(out), ids(BASE));
+  assert.notEqual(out, BASE);
+});
+
+test('applyBudget keeps only picks at or under the ceiling, preserving order', () => {
+  // BASE: soup 16.5, noodles 14.0, salad 13.5
+  assert.deepEqual(ids(applyBudget(BASE, 14)), ['noodles', 'salad']);
+  assert.deepEqual(ids(applyBudget(BASE, 13.5)), ['salad']);
+});
+
+test('applyBudget always keeps unpriced (price 0) dishes — never hide on a guess', () => {
+  const deal = [entry({ id: 'mystery', rank: 4, price: 0, score: 90 }), ...BASE];
+  assert.deepEqual(ids(applyBudget(deal, 10)), ['mystery']);
+});
+
+test('applyBudget never strands: all priced over budget → keep the cheapest', () => {
+  assert.deepEqual(ids(applyBudget(BASE, 5)), ['salad']); // 13.5 is cheapest
 });
