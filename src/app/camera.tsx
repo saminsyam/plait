@@ -7,7 +7,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -23,6 +23,8 @@ import { prepareMenuImage } from '@/engine/image';
 import { gateCrowdFavorites, matchCrowdFavorites } from '@/engine/matchReviews';
 import { filterBySpice } from '@/engine/questionEngine';
 import { rankFromPool } from '@/engine/rankFromPool';
+import type { MenuItem, VisionMenuContext } from '@/engine/types';
+import { listRecentMenus, loadMenuCache, saveMenuCache, type RecentMenu } from '@/lib/menuCache';
 import { beginScanTrace, logRankTrace } from '@/lib/scanCorpus';
 import { useProfile } from '@/state/profile';
 import { useSession } from '@/state/session';
@@ -110,6 +112,15 @@ function MenuRow({
   );
 }
 
+/** "today" / "3d ago" / "2w ago" — quiet age tag for a recent-place chip. */
+function ageLabel(iso: string): string {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
 /** Turn an error from the Vision pipeline into a friendly, actionable message. */
 function messageForError(e: unknown): string {
   const code = e instanceof Error ? e.message : '';
@@ -134,6 +145,14 @@ export default function CameraScreen() {
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { steps, onProgress, resetProgress } = useProgressSteps();
+  const [loaderTitle, setLoaderTitle] = useState('Reading your menu');
+
+  // Recent places — cached menus that re-enter the flow with ZERO vision
+  // tokens. Empty (row hidden) when Supabase is unconfigured or offline.
+  const [recents, setRecents] = useState<RecentMenu[]>([]);
+  useEffect(() => {
+    listRecentMenus().then(setRecents).catch(() => {});
+  }, []);
 
   // Pick an existing photo from the library — works even if camera is denied.
   const pickFromLibrary = async () => {
@@ -158,7 +177,7 @@ export default function CameraScreen() {
         // Straight to the picks screen — it kicks off the instant ranking
         // itself; no question funnel in between.
         onReady={() => router.replace('/picks')}
-        title="Reading your menu"
+        title={loaderTitle}
       />
     );
   }
@@ -180,6 +199,23 @@ export default function CameraScreen() {
           </Subtitle>
           <PrimaryButton label="Allow camera" onPress={requestPermission} />
           <PrimaryButton label="🖼  Upload a photo" variant="soft" onPress={pickFromLibrary} />
+          {error && <Body style={styles.error}>{error}</Body>}
+          {recents.length > 0 && (
+            <View style={styles.recentRow}>
+              {recents.map((r) => (
+                <Pressable
+                  key={r.restaurantKey}
+                  onPress={() => openRecent(r)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Reopen the saved ${r.restaurant} menu`}
+                  style={styles.recentChipLight}>
+                  <Text style={styles.recentTextLight} numberOfLines={1}>
+                    ⟳ {r.restaurant} · {ageLabel(r.scannedAt)}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
         </View>
       </SafeAreaView>
     );
@@ -194,8 +230,102 @@ export default function CameraScreen() {
     }
   };
 
+  // Everything after we have a parsed menu — shared by the live vision path
+  // and the menu-cache "recent places" path. The hard gate ALWAYS re-runs here
+  // against the current profile, so a cached menu is exactly as safe as a
+  // fresh scan even after the user edits their constraints.
+  async function finishScan(
+    items: MenuItem[],
+    menuContext: VisionMenuContext,
+    imageUri: string,
+    source: 'vision' | 'menu_cache'
+  ) {
+    // Run the deterministic safety gate ONCE: blocked dishes never enter the
+    // candidate pool the narrowing engine works on.
+    onProgress({ id: 'gate', icon: '🛡️', label: 'Applying your dietary guardrails', status: 'active' });
+    const gate = applyHardGate(items, hardConstraints);
+    const candidates = [...gate.allowed, ...gate.verify.map((v) => v.item)];
+    const verifyById = Object.fromEntries(gate.verify.map((v) => [v.item.id, v.reasons]));
+    onProgress({
+      id: 'gate',
+      icon: '🛡️',
+      label: 'Dietary guardrails applied',
+      detail:
+        `${candidates.length} dishes in play` +
+        (gate.blocked.length > 0 ? ` · ${gate.blocked.length} set aside` : ''),
+      status: 'done',
+    });
+    session.setScan({
+      imageUri,
+      items,
+      menuContext,
+      candidates,
+      verifyById,
+      blocked: gate.blocked,
+    });
+    // Corpus: capture the read + gate split (fire-and-forget telemetry).
+    beginScanTrace({
+      items,
+      menuContext,
+      candidates,
+      verifyById,
+      blocked: gate.blocked,
+      preferences: preferences ?? '',
+      spiceCeiling,
+      source,
+    });
+
+    // Run the instant Popular rank here, under the SAME loader, so the
+    // picks screen lands fully formed (no second loading screen). We only
+    // fold in CACHED reviews — an uncached review search still happens
+    // lazily on the picks screen and folds in ★ badges a beat later ("the
+    // swap"). A rank failure degrades to the picks retry path: swallow it
+    // and navigate anyway (popularReady stays false there).
+    if (candidates.length > 0) {
+      try {
+        const restaurantName = menuContext.restaurant_name.trim();
+        let crowdMap: Record<string, string> = {};
+        if (restaurantName) {
+          const cached = await getCachedReviews(restaurantName);
+          if (cached) {
+            crowdMap = gateCrowdFavorites(
+              matchCrowdFavorites(cached.crowd_favorites, items),
+              gate.blocked
+            ).rankable;
+          }
+        }
+        const pool = filterBySpice(candidates, spiceCeiling);
+        const picks = await rankFromPool({
+          pool,
+          questions: [],
+          answers: {},
+          preferences: preferences ?? '',
+          verifyById,
+          restaurantNotes: menuContext.restaurant_notes,
+          crowdMap,
+          onProgress,
+        });
+        session.setPopular({ spice: spiceCeiling, picks });
+        logRankTrace({
+          mode: 'popular',
+          restaurant: menuContext.restaurant_name,
+          cuisine: menuContext.cuisine_type,
+          pool,
+          questions: [],
+          answers: {},
+          crowdMap,
+          picks,
+        });
+      } catch {
+        // Ranking failed — the picks screen will retry with its own status.
+      }
+    }
+    setDone(true);
+  }
+
   const confirm = () => {
     if (!shot) return;
+    setLoaderTitle('Reading your menu');
     setBusy(true);
     setDone(false);
     setError(null);
@@ -214,92 +344,52 @@ export default function CameraScreen() {
           status: 'done',
         });
         const { items, menu_context } = await callVision(prepared.base64, 'image/jpeg', onProgress);
-        // Run the deterministic safety gate ONCE: blocked dishes never enter the
-        // candidate pool the narrowing engine works on.
-        onProgress({ id: 'gate', icon: '🛡️', label: 'Applying your dietary guardrails', status: 'active' });
-        const gate = applyHardGate(items, hardConstraints);
-        const candidates = [...gate.allowed, ...gate.verify.map((v) => v.item)];
-        const verifyById = Object.fromEntries(gate.verify.map((v) => [v.item.id, v.reasons]));
-        onProgress({
-          id: 'gate',
-          icon: '🛡️',
-          label: 'Dietary guardrails applied',
-          detail:
-            `${candidates.length} dishes in play` +
-            (gate.blocked.length > 0 ? ` · ${gate.blocked.length} set aside` : ''),
-          status: 'done',
-        });
-        session.setScan({
-          imageUri: prepared.uri,
-          items,
-          menuContext: menu_context,
-          candidates,
-          verifyById,
-          blocked: gate.blocked,
-        });
-        // Corpus: capture the read + gate split (fire-and-forget telemetry).
-        beginScanTrace({
-          items,
-          menuContext: menu_context,
-          candidates,
-          verifyById,
-          blocked: gate.blocked,
-          preferences: preferences ?? '',
-          spiceCeiling,
-        });
-
-        // Run the instant Popular rank here, under the SAME loader, so the
-        // picks screen lands fully formed (no second loading screen). We only
-        // fold in CACHED reviews — an uncached review search still happens
-        // lazily on the picks screen and folds in ★ badges a beat later ("the
-        // swap"). A rank failure degrades to the picks retry path: swallow it
-        // and navigate anyway (popularReady stays false there).
-        if (candidates.length > 0) {
-          try {
-            const restaurantName = menu_context.restaurant_name.trim();
-            let crowdMap: Record<string, string> = {};
-            if (restaurantName) {
-              const cached = await getCachedReviews(restaurantName);
-              if (cached) {
-                crowdMap = gateCrowdFavorites(
-                  matchCrowdFavorites(cached.crowd_favorites, items),
-                  gate.blocked
-                ).rankable;
-              }
-            }
-            const pool = filterBySpice(candidates, spiceCeiling);
-            const picks = await rankFromPool({
-              pool,
-              questions: [],
-              answers: {},
-              preferences: preferences ?? '',
-              verifyById,
-              restaurantNotes: menu_context.restaurant_notes,
-              crowdMap,
-              onProgress,
-            });
-            session.setPopular({ spice: spiceCeiling, picks });
-            logRankTrace({
-              mode: 'popular',
-              restaurant: menu_context.restaurant_name,
-              cuisine: menu_context.cuisine_type,
-              pool,
-              questions: [],
-              answers: {},
-              crowdMap,
-              picks,
-            });
-          } catch {
-            // Ranking failed — the picks screen will retry with its own status.
-          }
-        }
-        setDone(true);
+        // Refresh this restaurant's menu cache (fire-and-forget) so the next
+        // visit can skip the vision read entirely.
+        saveMenuCache({ items, menuContext: menu_context });
+        await finishScan(items, menu_context, prepared.uri, 'vision');
       } catch (e) {
         setBusy(false);
         setError(messageForError(e));
       }
     })();
   };
+
+  // A recent-place chip: load the cached read and re-enter the exact same
+  // pipeline — zero vision tokens. Any failure drops back to a fresh scan.
+  // (Function declaration: hoisted, so the permission-gate return above the
+  // handler block can render the chips too.)
+  function openRecent(recent: RecentMenu) {
+    setLoaderTitle(`Back at ${recent.restaurant}`);
+    setBusy(true);
+    setDone(false);
+    setError(null);
+    resetProgress();
+    (async () => {
+      try {
+        onProgress({
+          id: 'cache',
+          icon: '📂',
+          label: `Loading ${recent.restaurant}`,
+          detail: `saved ${ageLabel(recent.scannedAt)}`,
+          status: 'active',
+        });
+        const cached = await loadMenuCache(recent.restaurantKey);
+        if (!cached) throw new Error('CACHE_MISS');
+        onProgress({
+          id: 'cache',
+          icon: '📂',
+          label: 'Menu loaded',
+          detail: `${cached.items.length} dishes, no re-scan needed`,
+          status: 'done',
+        });
+        await finishScan(cached.items, cached.menu_context, '', 'menu_cache');
+      } catch {
+        setBusy(false);
+        setError('Couldn’t load that saved menu — give it a fresh scan.');
+      }
+    })();
+  }
 
   // --- Preview / retake
   if (shot) {
@@ -331,6 +421,22 @@ export default function CameraScreen() {
           <CornerMenu dark />
         </View>
         <View style={styles.spacer} />
+        {recents.length > 0 && (
+          <View style={styles.recentRow}>
+            {recents.map((r) => (
+              <Pressable
+                key={r.restaurantKey}
+                onPress={() => openRecent(r)}
+                accessibilityRole="button"
+                accessibilityLabel={`Reopen the saved ${r.restaurant} menu`}
+                style={styles.recentChip}>
+                <Text style={styles.recentText} numberOfLines={1}>
+                  ⟳ {r.restaurant} · {ageLabel(r.scannedAt)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
         <Body style={styles.hint}>Frame the whole menu, then tap to capture</Body>
         {error && <Body style={styles.error}>{error}</Body>}
         <View style={styles.shutterRow}>
@@ -409,6 +515,32 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   uploadText: { color: '#fff', fontSize: 15, fontWeight: '600', fontFamily: Plait.font.body },
+  // Recent places — cached menus, zero vision tokens to reopen.
+  recentRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: Plait.space.lg,
+  },
+  recentChip: {
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: Plait.radius.pill,
+    maxWidth: '100%',
+  },
+  recentText: { color: '#fff', fontSize: 13, fontWeight: '600', fontFamily: Plait.font.body },
+  recentChipLight: {
+    backgroundColor: Plait.color.card,
+    borderWidth: 1,
+    borderColor: Plait.color.line,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: Plait.radius.pill,
+    maxWidth: '100%',
+  },
+  recentTextLight: { color: Plait.color.ink, fontSize: 13, fontWeight: '600', fontFamily: Plait.font.body },
   preview: {
     flex: 1,
     borderRadius: Plait.radius.lg,

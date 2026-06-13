@@ -47,6 +47,8 @@ export function beginScanTrace(input: {
   blocked: FilteredItem[];
   preferences: string;
   spiceCeiling: number;
+  /** Where the items came from: a live vision read or the menu cache. */
+  source?: 'vision' | 'menu_cache';
 }): void {
   const scanId = newScanId();
   currentScanId = scanId;
@@ -57,6 +59,7 @@ export function beginScanTrace(input: {
     restaurant: menuContext.restaurant_name,
     cuisine: menuContext.cuisine_type,
     payload: {
+      source: input.source ?? 'vision',
       items,
       menu_context: menuContext,
       gate: {
